@@ -116,119 +116,99 @@ impl Pool {
         }
         self.set_freed(Some(free));
     }
-}
 
-
-
-/// get an unused index
-fn get_unused_index(pool: &mut Pool) -> Result<index> {
-    // TODO:
-    // this is currently pretty slow -- there are some things
-    // that we could do to make it faster, like keep an array
-    // of unused indexes that get repopulated when there is
-    // nothing to defragment, or keep a binary list so we can
-    // search for the unused index by usize increments... or both
-    let mut i = (pool.last_used_index + 1) % pool.indexes.len() as u16;
-    while i != pool.last_used_index {
-        let index = &pool.indexes[i as usize];
-        if index.size != 0 {
-            pool.last_used_index = i;
-            return Ok(i as index);
-        }
-        i = (i + 1) % pool.indexes.len() as u16;
-    }
-    return Err(Error::OutOfIndexes);
-}
-
-/// iterate through the freed linked-list to find a freed index
-/// of the appropriate size.
-/// This can be sped up dramatically with a hash table
-fn get_freed_block(pool: &mut Pool, size: block) -> Option<block> {
-    let mut block = match pool.freed {
-        Some(b) => b,
-        None => return None,
-    };
-    loop {
-        let freed = &mut pool.blocks[block as usize] as *mut Freed;
-        // unsafe because we need a reference (*freed) inside pool.blocks while
-        // we mutate data in pool.blocks
-        unsafe {
-            if (*freed).size == size {
-                // perfectly equal, consumes freed block
-                match (*freed).prev {
-                    Some(p) => pool.blocks[p as usize].next = (*freed).next,
-                    None => pool.freed = (*freed).next,
-                }
-                match (*freed).next {
-                    Some(p) => pool.blocks[p as usize].prev = (*freed).prev,
-                    None => {},
-                }
-                return Some((*freed).block);
-            } else if (*freed).size > size {
-                // use only the size that is needed, so insert a new freed block
-                let new_block = (*freed).block + size;
-                {
-                    let new_freed = &mut pool.blocks[new_block as usize];
-                    new_freed.prev = (*freed).prev;
-                    new_freed.next = (*freed).next;
-                }
-                let new_block = Some(new_block);
-                match (*freed).prev {
-                    Some(p) => pool.blocks[p as usize].next = new_block,
-                    None => pool.freed = new_block,
-                }
-                match (*freed).next {
-                    Some(p) => pool.blocks[p as usize].prev = new_block,
-                    None => {},
-                }
-                return Some((*freed).block);
+    /// get an unused index
+    fn get_unused_index(&mut self) -> Result<index> {
+        // TODO:
+        // this is currently pretty slow -- there are some things
+        // that we could do to make it faster, like keep an array
+        // of unused indexes that get repopulated when there is
+        // nothing to defragment, or keep a binary list so we can
+        // search for the unused index by usize increments... or both
+        let mut i = (self.last_used_index + 1) % self.indexes.len() as u16;
+        while i != self.last_used_index {
+            let index = &self.indexes[i as usize];
+            if index.size != 0 {
+                self.last_used_index = i;
+                return Ok(i as index);
             }
-            block = match (*freed).next {
-                Some(b) => b,
-                None => return None,
-            };
+            i = (i + 1) % self.indexes.len() as u16;
+        }
+        return Err(Error::OutOfIndexes);
+    }
+
+    fn get_freed_block(&mut self, size: block) -> Option<block> {
+        let mut block = match self.freed {
+            Some(b) => b,
+            None => return None,
+        };
+        loop {
+            let freed = &mut self.blocks[block as usize] as *mut Freed;
+            unsafe {
+                // all unsafe operations are safe because we know that we are
+                // never changing more than one freed block at a time
+                if (*freed).size == size {
+                    // perfectly equal, consumes freed block
+                    (*freed).remove(self);
+                    return Some((*freed).block);
+                } else if (*freed).size > size {
+                    // use only the size that is needed, so append a new freed block
+                    let new_freed = &mut self.blocks[((*freed).block + size) as usize]
+                        as *mut Freed;
+                    (*freed).append(self, &mut (*new_freed));
+                    (*freed).remove(self);
+                    return Some((*freed).block);
+                }
+                block = match (*freed).next {
+                    Some(b) => b,
+                    None => return None,
+                };
+            }
         }
     }
+    /// allocate data of a certain size, returning it's index
+    /// in the pool.blocks
+    fn alloc_index(&mut self, size: block) -> Result<index> {
+        if size == 0 {
+            return Err(Error::InvalidSize);
+        }
+        if (self.total_used + size) as usize > self.blocks.len() {
+            return Err(Error::OutOfMemory);
+        }
+        let prev_used_index = self.last_used_index;
+        let index = try!(self.get_unused_index());
+        if let Some(block) = self.get_freed_block(size) {
+            self.indexes[index as usize].size = size;
+            self.indexes[index as usize].block = block;
+            Ok(index)
+        } else if (self.heap_block + size) as usize <= self.blocks.len() {
+            self.indexes[index as usize].size = size;
+            self.indexes[index as usize].block = self.heap_block;
+            self.heap_block += size;
+            Ok(index)
+        } else {
+            self.last_used_index = prev_used_index;
+            Err(Error::Fragmented)
+        }
+    }
+
+    /// dealoc an index from the pool, this will corrupt any data that was there
+    unsafe fn dealloc_index(&mut self, i: index) {
+        // get the size and location from the Index and clear it
+        let freed = {
+            let ref index = self.indexes[i as usize];
+            assert!(index.size != 0, "size={}", index.size);
+            &mut self.blocks[index.block as usize]
+        } as *mut Freed;
+        // let index = &self.indexes[i as usize] as *const Index;
+        // assert!((*index).size != 0, "size={}", (*index).size);
+        // let freed = &mut self.blocks[(*index).block as usize] as *mut Freed;
+        (*freed).block = self.indexes[i as usize].block;
+        (*freed).size = self.indexes[i as usize].size;
+        self.indexes[i as usize] = Index::default();
+        self.set_freed(Some(&mut *freed));
+    }
 }
 
-/// allocate data of a certain size, returning it's index
-/// in the pool.blocks
-fn alloc_index(pool: &mut Pool, size: block) -> Result<index> {
-    if size == 0 {
-        return Err(Error::InvalidSize);
-    }
-    if (pool.total_used + size) as usize > pool.blocks.len() {
-        return Err(Error::OutOfMemory);
-    }
-    let prev_used_index = pool.last_used_index;
-    let index = try!(get_unused_index(pool));
-    if let Some(block) = get_freed_block(pool, size) {
-        pool.indexes[index as usize].size = size;
-        pool.indexes[index as usize].block = block;
-        Ok(index)
-    } else if (pool.heap_block + size) as usize <= pool.blocks.len() {
-        pool.indexes[index as usize].size = size;
-        pool.indexes[index as usize].block = pool.heap_block;
-        pool.heap_block += size;
-        Ok(index)
-    } else {
-        pool.last_used_index = prev_used_index;
-        Err(Error::Fragmented)
-    }
-}
 
 
-/// dealoc an index from the pool, this will overwrite some of it's data
-unsafe fn dealloc_index(pool: &mut Pool, i: index) {
-    // get the size and location from the Index and clear it
-    let block = pool.indexes[i as usize].block;
-    let freed = &mut pool.blocks[block as usize];
-    freed.size = pool.indexes[i as usize].size;
-    pool.indexes[i as usize] = Index::default();
-
-    // update the linked list and data
-    freed.next = pool.freed;
-    freed.prev = None;
-    freed.block = block;
-    pool.freed = Some(block);
-}
