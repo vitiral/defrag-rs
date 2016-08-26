@@ -1,0 +1,6 @@
+[package]
+name = "fake"
+version = "0.1.0"
+authors = ["Garrett Berg <gberg@neutral.io>"]
+
+[dependencies]
