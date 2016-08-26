@@ -2,9 +2,85 @@
 
 use core::result;
 
+/// memory error codes
+enum Error {
+    Fragmented,
+    OutOfMemory,
+    OutOfIndexes,
+    InvalidSize,
+}
+
+type Result<T> = result::Result<T, Error>;
+
+
 type index = u16;
 type block = u16;
 
+
+/// the Freed struct is a linked list of values
+#[repr(C)]
+struct Freed {
+    block: block,         // block location of this struct
+    size: block,          // size of this freed memory
+    prev: Option<block>,  // location of previous freed memory
+    next: Option<block>,  // location of next freed memory
+}
+
+impl Freed {
+    /// set the next freed block and set it's prev to self
+    unsafe fn set_next(&mut self, next: Option<&mut Freed>) {
+        match next {
+            Some(n) => {
+                self.next = Some(n.block);
+                n.prev = Some(self.block);
+            }
+            None => self.next = None,
+        }
+    }
+
+    /// set the prev freed block and set it's next to self
+    unsafe fn set_prev(&mut self, pool: &mut Pool, prev: Option<&mut Freed>) {
+        match prev {
+            Some(p) => {
+                self.prev = Some(p.block);
+                p.next = Some(self.block);
+            }
+            None => {
+                pool.set_freed(Some(self));
+            }
+        }
+    }
+
+    /// append a freed block after this one
+    fn append(&mut self, pool: &mut Pool, next: &mut Freed) {
+        let pool = pool as *mut Pool;
+        unsafe {
+            if let Some(n) = self.next {
+                (*pool).blocks[n as usize].set_prev(&mut (*pool), Some(next));
+            }
+            self.set_next(Some(next));
+        }
+    }
+
+    /// remove self from the freed pool
+    fn remove(&mut self, pool: &mut Pool) {
+        let poolp = pool as *mut Pool;
+        unsafe {
+            match (*poolp).get_freed(self.prev) {
+                Some(p) => p.set_next(pool.get_freed(self.next)),
+                None => (*poolp).set_freed(pool.get_freed(self.next)),
+            }
+        }
+    }
+}
+
+/// the index is how the application finds the data
+/// and frees it
+#[derive(Default)]
+struct Index {
+    size: block,   // the size of the data in blocks, 0 if not used
+    block: block,  // the block where the data is located
+}
 /// The pool contains all the information necessary to
 /// allocate and reserve data
 struct Pool {
@@ -16,32 +92,32 @@ struct Pool {
     blocks: [Freed; 4096],
 }
 
-/// the Freed struct is a linked list of values
-#[repr(C)]
-struct Freed {
-    block: block,         // block location of this struct
-    size: block,          // size of this freed memory
-    prev: Option<block>,  // location of previous freed memory
-    next: Option<block>,  // location of next freed memory
+impl Pool {
+    fn get_freed(&mut self, b: Option<block>) -> Option<&mut Freed> {
+        match b {
+            Some(b) => Some(&mut self.blocks[b as usize]),
+            None => None,
+        }
+    }
+
+    fn set_freed(&mut self, free: Option<&mut Freed>) {
+        match free {
+            Some(f) => {
+                self.freed = Some(f.block);
+                f.prev = None;  // it is the beginning of the list
+            }
+            None => self.freed = None,
+        }
+    }
+
+    fn insert_freed(&mut self, free: &mut Freed) {
+        if let Some(f) = self.freed {
+            self.blocks[f as usize].prev = Some(free.block);
+        }
+        self.set_freed(Some(free));
+    }
 }
 
-/// the index is how the application finds the data
-/// and frees it
-#[derive(Default)]
-struct Index {
-    size: block,   // the size of the data in blocks, 0 if not used
-    block: block,  // the block where the data is located
-}
-
-/// memory error codes
-enum Error {
-    Fragmented,
-    OutOfMemory,
-    OutOfIndexes,
-    InvalidSize,
-}
-
-type Result<T> = result::Result<T, Error>;
 
 
 /// get an unused index
@@ -142,7 +218,8 @@ fn alloc_index(pool: &mut Pool, size: block) -> Result<index> {
 }
 
 
-fn dealloc_index(pool: &mut Pool, i: index) {
+/// dealoc an index from the pool, this will overwrite some of it's data
+unsafe fn dealloc_index(pool: &mut Pool, i: index) {
     // get the size and location from the Index and clear it
     let block = pool.indexes[i as usize].block;
     let freed = &mut pool.blocks[block as usize];
