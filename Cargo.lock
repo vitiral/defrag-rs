@@ -1,4 +1,4 @@
 [root]
-name = "fake"
+name = "tinymem"
 version = "0.1.0"
 

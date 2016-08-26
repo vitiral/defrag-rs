@@ -1,6 +1,6 @@
 [package]
-name = "fake"
+name = "tinymem"
 version = "0.1.0"
-authors = ["Garrett Berg <gberg@neutral.io>"]
+authors = ["Garrett Berg <vitiral@gmail.com>"]
 
 [dependencies]
