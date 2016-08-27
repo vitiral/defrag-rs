@@ -203,12 +203,12 @@ impl Full {
 
     /// set the lock on Full
     pub fn set_lock(&mut self) {
-        self._index &= INDEX_BITMAP
+        self._index |= INDEX_HIGH_BIT;
     }
 
     /// clear the lock on Full
     pub fn clear_lock(&mut self) {
-        self._index |= INDEX_HIGH_BIT;
+        self._index &= INDEX_BITMAP
     }
 
     fn from_block_mut<'a>(pool: &'a mut RawPool, block: block) -> &'a mut Full {

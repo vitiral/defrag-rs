@@ -77,6 +77,7 @@ impl<'pool, T: Sized> Mutex<'pool, T> {
                 Err(TryLockError::WouldBlock)
             } else {
                 full.set_lock();
+                assert!(full.is_locked());
                 let pool = self.pool.raw.get();
                 let index = (*pool).indexes[self.index];
                 let out: &'pool mut T = mem::transmute(index.ptr(&mut *pool));
@@ -89,7 +90,10 @@ impl<'pool, T: Sized> Mutex<'pool, T> {
 impl<'a, T: Sized> Drop for Mutex<'a, T> {
     fn drop(&mut self) {
         unsafe {
-            (*self.pool.raw.get()).dealloc_index(self.index);
+            let pool = self.pool.raw.get();
+            let index = &mut (*pool).indexes[self.index];
+            index.full_mut(&mut *pool).clear_lock();
+            (*pool).dealloc_index(self.index);
         }
     }
 }
@@ -102,8 +106,21 @@ fn test_alloc() {
     let mut pool = Pool::new(&mut indexes, &mut blocks);
 
     let val = pool.alloc::<i32>().unwrap();
-    let ref_val = val.try_lock().unwrap();
+    {
+        let ref_val = val.try_lock().unwrap();
+        *ref_val = 10;
+        assert_eq!(&10, ref_val);
+        let result = val.try_lock();
+        assert!(result.is_err(), "{:?}", result);
+    }
+    // go out of scope and re-obtain the value
+    {
+        let ref_val = val.try_lock().unwrap();
+        assert_eq!(&10, ref_val);
+    }
+
     // let x = &10 == ref_val;
-    // let ref_val = val.try_lock();
+    // println!("x={:?}", x);
+    // assert!(x);
     // assert_eq!(&10, i.try_lock().unwrap().deref());
 }
