@@ -4,7 +4,7 @@
 use super::types::*;
 use core::mem;
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 struct Index {
     _block: block,
 }
@@ -128,6 +128,12 @@ impl Pool {
                     // use only the size that is needed, so append a new freed block
                     let new_freed = &mut self.blocks[((*freed).block + blocks) as usize]
                         as *mut Free;
+                    (*new_freed) = Free {
+                        _blocks: (*freed).blocks() - blocks,
+                        block: (*freed).block + blocks,
+                        _prev: NULL_BLOCK,
+                        _next: NULL_BLOCK,
+                    };
                     (*freed).append(self, &mut (*new_freed));
                     (*freed).remove(self);
                     return Some((*freed).block);
@@ -193,14 +199,26 @@ impl Pool {
 /// the Free struct is a linked list of free values with
 /// the root as a size-bin in pool
 #[repr(packed)]
-#[derive(Default, Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 struct Free {
-    // The first bit of blocks is always 0 for Free structs
+    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Full`
+    // The first bit of `_blocks` is always 0 for Free structs
     _blocks: block,        // size of this freed memory
     block: block,          // block location of this struct
     _prev: block,          // location of previous freed memory
     _next: block,          // location of next freed memory
     // data after this (until block + blocks) is invalid
+}
+
+impl Default for Free {
+    fn default() -> Free {
+        Free {
+            _blocks: 0,
+            block: NULL_BLOCK,
+            _prev: NULL_BLOCK,
+            _next: NULL_BLOCK,
+        }
+    }
 }
 
 impl Free {
@@ -276,7 +294,9 @@ impl Free {
 /// the Full struct only contains enough information about the data to
 /// allocate it
 #[repr(packed)]
+#[derive(Debug)]
 struct Full {
+    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Free`
     // The first bit of blocks is 1 for Full structs
     _blocks: block,        // size of this freed memory
     _index: index,         // data which contains the index and the lock information
@@ -347,8 +367,12 @@ fn test_indexes() {
     assert_eq!(pool.get_unused_index().unwrap(), 0);
     assert_eq!(pool.get_unused_index().unwrap(), 1);
     assert_eq!(pool.get_unused_index().unwrap(), 2);
+
     // allocate an index
+    println!("allocate 1");
+    assert_eq!(pool.freed(), None);
     let i = pool.alloc_index(4).unwrap();
+    assert_eq!(i, 3);
     let block;
     {
         let index = &pool.indexes[i];
@@ -360,12 +384,58 @@ fn test_indexes() {
 
         }
     }
+
     // deallocate the index
+    println!("free 1");
+    assert_eq!(pool.freed(), None);
     unsafe {
         pool.dealloc_index(i);
     }
-    assert_eq!(pool.indexes[i].block(), None);
-    assert_eq!(pool.blocks[block].blocks(), 4);
-    assert_eq!(pool.blocks[block]._blocks, 4);
-    assert_eq!(pool.freed().unwrap(), block);
+    {
+        assert_eq!(pool.indexes[i].block(), None);
+
+        let freed = &pool.blocks[block];
+        assert_eq!(freed.blocks(), 4);
+        assert_eq!(freed._blocks, 4);
+        assert_eq!(freed.prev(), None);
+        assert_eq!(freed.next(), None);
+        assert_eq!(pool.freed().unwrap(), block);
+    }
+
+    // allocate another index
+    println!("allocate 2");
+    let i2 = pool.alloc_index(8).unwrap();
+    assert_eq!(i2, 4);
+    let block2;
+    {
+        let index2 = &pool.indexes[i2];
+        block2 = index2.block().unwrap();
+        assert_eq!(block2, 4);
+        unsafe {
+            assert_eq!(index2.full(&pool).blocks(), 8);
+            assert_eq!(index2.full(&pool)._blocks, HIGH_BLOCK_BIT | 8);
+        }
+    }
+
+    // allocate a 3rd index that fits in the first
+    println!("allocate 3");
+    let i3 = pool.alloc_index(2).unwrap();
+    assert_eq!(i3, 5);
+    let block3;
+    {
+        let index3 = &pool.indexes[i3];
+        block3 = index3.block().unwrap();
+        assert_eq!(block3, 0);
+        unsafe {
+            assert_eq!(index3.full(&pool).blocks(), 2);
+            assert_eq!(index3.full(&pool)._blocks, HIGH_BLOCK_BIT | 2);
+        }
+    }
+    // tests related to the fact that i3 just overwrote the freed item
+    assert_eq!(pool.freed().unwrap(), 2);
+    {
+        // free1 has moved
+        let free = pool.blocks[2];
+        assert_eq!(free.blocks(), 2);
+    }
 }
