@@ -15,8 +15,8 @@ struct Index {
 /// The RawPool is the private container and manager for all allocated
 /// and freed data
 // TODO: indexes and blocks need to be dynamically sized
-struct RawPool {
-    indexes: [Index; 256],   // actual pointers to the data
+struct RawPool<'a> {
+    indexes: &'a [Index],   // actual pointers to the data
     last_index_used: usize,  // for speeding up finding indexes
     _freed: block,           // free values
     heap_block: block,       // the current location of the "heap"
