@@ -238,7 +238,7 @@ impl Full {
 // # RawPool impls
 
 impl<'a> RawPool<'a> {
-    fn new(indexes:&'a mut [Index], blocks: &'a mut [Block]) -> RawPool<'a> {
+    pub fn new(indexes:&'a mut [Index], blocks: &'a mut [Block]) -> RawPool<'a> {
         RawPool {
             last_index_used: indexes.len() - 1,
             indexes: indexes,

@@ -2,17 +2,19 @@ use super::types::*;
 
 use super::pool::{RawPool, Block, Index, Full};
 use core::mem;
+use core::cell::UnsafeCell;
+use core::marker::PhantomData;
 
 use core::ops::{Deref, DerefMut};
 
 pub struct Pool<'a> {
-    raw: core::cell::UnsafeCell<RawPool<'a>>,
+    raw: UnsafeCell<RawPool<'a>>,
 }
 
-pub struct Mutex<'a, T: Sized + 'a> {
+pub struct Mutex<'a, T> {
     index: index,
     pool: &'a Pool<'a>,
-    data: core::marker::PhantomData<&'a T>,
+    data: PhantomData<T>,
 }
 
 // impl<'pool, T: Sized> Mutex<'pool, T> {
@@ -20,7 +22,7 @@ pub struct Mutex<'a, T: Sized + 'a> {
 //     }
 // }
 
-pub struct MutexGuard<'a, T: Sized + 'a> {
+pub struct MutexGuard<'a, T: 'a> {
     __lock: &'a Mutex<'a, T>,
 }
 
@@ -29,20 +31,23 @@ pub type TryLockResult<Guard> = core::result::Result<Guard, TryLockError>;
 
 /// An enumeration of possible errors which can occur while calling the
 /// `try_lock` method.
+#[derive(Debug)]
 pub enum TryLockError {
     /// The lock could not be acquired at this time because the operation would
     /// otherwise block.
     WouldBlock,
 }
 
+
 impl <'pool> Pool<'pool> {
-    pub fn alloc<T>(&'pool self) -> Result<Mutex<'pool, T>>
-    {
-        self.alloc_unsized(mem::size_of::<T>())
+    pub fn new(indexes:&'pool mut [Index], blocks: &'pool mut [Block]) -> Pool<'pool> {
+        Pool {
+            raw: UnsafeCell::new(RawPool::new(indexes, blocks)),
+        }
     }
 
-    pub fn alloc_unsized<T: Sized>(&'pool self, size: usize) -> Result<Mutex<'pool, T>> {
-        let actual_size = size + mem::size_of::<Full>();
+    pub fn alloc<T>(&'pool self) -> Result<Mutex<'pool, T>> {
+        let actual_size = mem::size_of::<T>() + mem::size_of::<Full>();
         // get ceil(actual_size, sizeof(Block))
         let blocks = actual_size / mem::size_of::<Block>() +
             if actual_size % mem::size_of::<Block>() != 0 {1} else {0};
@@ -52,7 +57,7 @@ impl <'pool> Pool<'pool> {
             Ok(Mutex {
                 index: i,
                 pool: self,
-                data: core::marker::PhantomData,
+                data: PhantomData,
             })
         }
     }
@@ -126,4 +131,17 @@ impl<'mutex, T: Sized> DerefMut for MutexGuard<'mutex, T> {
             mem::transmute(index.ptr(&mut *pool))
         }
     }
+}
+#[test]
+fn test_alloc() {
+    // test using raw indexes
+    let mut indexes = [Index::default(); 256];
+    let mut blocks = [Block::default(); 4096];
+    let mut pool = Pool::new(&mut indexes, &mut blocks);
+
+    let aval = pool.alloc::<i32>();
+    let uval = aval.unwrap();
+    let rval = uval.try_lock();
+    // let ref_val = val.try_lock();
+    // assert_eq!(&10, i.try_lock().unwrap().deref());
 }
