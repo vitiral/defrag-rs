@@ -117,12 +117,13 @@ impl<'mutex, T: Sized> Deref for MutexGuard<'mutex, T> {
     }
 }
 
-// impl<'mutex, T: Sized> DerefMut for MutexGuard<'mutex, T> {
-//     fn deref_mut(&mut self) -> &mut T {
-//         let i = self.__lock.index;
-//         unsafe {
-//             let pool = self.__lock.pool.raw.get();
-//             mem::tran*(*pool).indexes[i].ptr(&*pool)
-//         }
-//     }
-// }
+impl<'mutex, T: Sized> DerefMut for MutexGuard<'mutex, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        let i = self.__lock.index;
+        unsafe {
+            let pool = self.__lock.pool.raw.get();
+            let index = (*pool).indexes[i];
+            mem::transmute(index.ptr(&mut *pool))
+        }
+    }
+}
