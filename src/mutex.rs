@@ -17,8 +17,12 @@ pub struct Mutex<'a, T> {
     data: PhantomData<T>,
 }
 
+pub struct MutexGuard<'a, T: 'a> {
+    __lock: &'a Mutex<'a, T>,
+}
+
 /// A type alias for the result of a nonblocking locking method.
-pub type TryLockResult<T> = core::result::Result<T, TryLockError>;
+pub type TryLockResult<Guard> = core::result::Result<Guard, TryLockError>;
 
 /// An enumeration of possible errors which can occur while calling the
 /// `try_lock` method.
@@ -54,6 +58,7 @@ impl <'pool> Pool<'pool> {
     }
 }
 
+
 impl<'pool, T: Sized> Mutex<'pool, T> {
     /// Attempts to acquire this lock.
     ///
@@ -68,7 +73,7 @@ impl<'pool, T: Sized> Mutex<'pool, T> {
     /// If another user of this mutex panicked while holding the mutex, then
     /// this call will return failure if the mutex would otherwise be
     /// acquired.
-    pub fn try_lock(&self) -> TryLockResult<&'pool mut T> {
+    pub fn try_lock(&'pool self) -> TryLockResult<MutexGuard<T>> {
         unsafe {
             let pool = self.pool.raw.get();
             let index = &mut (*pool).indexes[self.index];
@@ -77,11 +82,7 @@ impl<'pool, T: Sized> Mutex<'pool, T> {
                 Err(TryLockError::WouldBlock)
             } else {
                 full.set_lock();
-                assert!(full.is_locked());
-                let pool = self.pool.raw.get();
-                let index = (*pool).indexes[self.index];
-                let out: &'pool mut T = mem::transmute(index.ptr(&mut *pool));
-                Ok(out)
+                Ok(MutexGuard::new(self))
             }
         }
     }
@@ -90,14 +91,42 @@ impl<'pool, T: Sized> Mutex<'pool, T> {
 impl<'a, T: Sized> Drop for Mutex<'a, T> {
     fn drop(&mut self) {
         unsafe {
-            let pool = self.pool.raw.get();
-            let index = &mut (*pool).indexes[self.index];
-            index.full_mut(&mut *pool).clear_lock();
-            (*pool).dealloc_index(self.index);
+            (*self.pool.raw.get()).dealloc_index(self.index);
         }
     }
 }
 
+impl<'mutex, T: Sized> MutexGuard<'mutex, T> {
+    unsafe fn new(lock: &'mutex Mutex<'mutex, T>) -> MutexGuard<'mutex, T> {
+        MutexGuard {
+            __lock: lock,
+        }
+    }
+}
+
+impl<'mutex, T: Sized> Deref for MutexGuard<'mutex, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        let i = self.__lock.index;
+        unsafe {
+            let pool = self.__lock.pool.raw.get();
+            let index = (*pool).indexes[i];
+            mem::transmute(index.ptr(&*pool))
+        }
+    }
+}
+
+impl<'mutex, T: Sized> DerefMut for MutexGuard<'mutex, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        let i = self.__lock.index;
+        unsafe {
+            let pool = self.__lock.pool.raw.get();
+            let index = (*pool).indexes[i];
+            mem::transmute(index.ptr(&mut *pool))
+        }
+    }
+}
 #[test]
 fn test_alloc() {
     // test using raw indexes
@@ -105,22 +134,9 @@ fn test_alloc() {
     let mut blocks = [Block::default(); 4096];
     let mut pool = Pool::new(&mut indexes, &mut blocks);
 
-    let val = pool.alloc::<i32>().unwrap();
-    {
-        let ref_val = val.try_lock().unwrap();
-        *ref_val = 10;
-        assert_eq!(&10, ref_val);
-        let result = val.try_lock();
-        assert!(result.is_err(), "{:?}", result);
-    }
-    // go out of scope and re-obtain the value
-    {
-        let ref_val = val.try_lock().unwrap();
-        assert_eq!(&10, ref_val);
-    }
-
-    // let x = &10 == ref_val;
-    // println!("x={:?}", x);
-    // assert!(x);
+    let aval = pool.alloc::<i32>();
+    let uval = aval.unwrap();
+    // let rval = uval.try_lock();
+    // let ref_val = val.try_lock();
     // assert_eq!(&10, i.try_lock().unwrap().deref());
 }
