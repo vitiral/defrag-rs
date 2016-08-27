@@ -1,12 +1,12 @@
 pub use core;
 
-pub const NULL_BLOCK: block = usize::max_value();
-pub const HIGH_BLOCK_BIT: block = !((block::max_value() << 1) >> 1);
-pub const BLOCK_BITMAP: block = !HIGH_BLOCK_BIT;
+pub const BLOCK_NULL: block = index::max_value();
+pub const BLOCK_HIGH_BIT: block = !((block::max_value() << 1) >> 1);
+pub const BLOCK_BITMAP: block = !BLOCK_HIGH_BIT;
 
-pub const NULL_INDEX: index = usize::max_value();
-pub const HIGH_INDEX_BIT: index = !((index::max_value() << 1) >> 1);
-pub const INDEX_BITMAP: index = !HIGH_INDEX_BIT;
+pub const INDEX_NULL: index = index::max_value();
+pub const INDEX_HIGH_BIT: index = !((index::max_value() << 1) >> 1);
+pub const INDEX_BITMAP: index = !INDEX_HIGH_BIT;
 
 
 /// memory error codes

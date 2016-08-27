@@ -20,12 +20,12 @@ pub struct Index {
 /// and freed data
 // TODO: indexes and blocks need to be dynamically sized
 pub struct RawPool<'a> {
-    indexes: &'a mut [Index],   // actual pointers to the data
+    pub indexes: &'a mut [Index],   // actual pointers to the data
     last_index_used: usize,  // for speeding up finding indexes
     _freed: block,           // free values
     heap_block: block,       // the current location of the "heap"
     total_used: block,       // total memory currently used
-    _blocks: &'a mut [Block],    // actual data
+    _raw_blocks: &'a mut [Block],    // actual data
 }
 
 /// the Free struct is a linked list of free values with
@@ -46,7 +46,7 @@ struct Free {
 /// allocate it
 #[repr(packed)]
 #[derive(Debug)]
-struct Full {
+pub struct Full {
     // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Free`
     // The first bit of blocks is 1 for Full structs
     _blocks: block,        // size of this freed memory
@@ -60,28 +60,28 @@ struct Full {
 
 impl core::default::Default for Index {
     fn default() -> Index {
-        Index {_block: NULL_BLOCK}
+        Index {_block: BLOCK_NULL}
     }
 }
 
 impl Index {
     fn block(&self) -> Option<block> {
-        if self._block == NULL_BLOCK {
+        if self._block == BLOCK_NULL {
             None
         } else {
             Some(self._block)
         }
     }
 
-    unsafe fn full<'a>(&self, pool: &'a RawPool) -> &'a Full {
+    pub unsafe fn full<'a>(&self, pool: &'a mut RawPool) -> &'a mut Full {
         let block = match self.block() {
             Some(b) => b,
             None => unreachable!(),
         };
-        Full::from_block(pool, block)
+        Full::from_block_mut(pool, block)
     }
 
-    unsafe fn ptr(&self, pool: &RawPool) -> *const u8 {
+    pub unsafe fn ptr(&self, pool: &RawPool) -> *const u8 {
         let block = match self.block() {
             Some(b) => b,
             None => unreachable!(),
@@ -100,9 +100,9 @@ impl Default for Free {
     fn default() -> Free {
         Free {
             _blocks: 0,
-            block: NULL_BLOCK,
-            _prev: NULL_BLOCK,
-            _next: NULL_BLOCK,
+            block: BLOCK_NULL,
+            _prev: BLOCK_NULL,
+            _next: BLOCK_NULL,
         }
     }
 }
@@ -115,7 +115,7 @@ impl Free {
 
     /// prev accessor, handling any bitmaps
     fn prev(&self) -> Option<block> {
-        if self._prev == NULL_BLOCK {
+        if self._prev == BLOCK_NULL {
             None
         } else {
             Some(self._prev)
@@ -124,7 +124,7 @@ impl Free {
 
     /// next accessor, handling any bitmaps
     fn next(&self) -> Option<block> {
-        if self._next == NULL_BLOCK {
+        if self._next == BLOCK_NULL {
             None
         } else {
             Some(self._next)
@@ -137,7 +137,7 @@ impl Free {
                 self._next = n.block;
                 n._prev = self.block;
             }
-            None => self._next = NULL_BLOCK,
+            None => self._next = BLOCK_NULL,
         }
     }
 
@@ -181,6 +181,21 @@ impl Free {
 // # Full impls
 
 impl Full {
+    /// get whether Full is locked
+    pub fn is_locked(&self) -> bool {
+        self._index & INDEX_HIGH_BIT == INDEX_HIGH_BIT
+    }
+
+    /// set the lock on Full
+    pub fn set_lock(&mut self) {
+        self._index &= INDEX_BITMAP
+    }
+
+    /// clear the lock on Full
+    pub fn clear_lock(&mut self) {
+        self._index |= INDEX_HIGH_BIT;
+    }
+
     fn from_block_mut<'a>(pool: &'a mut RawPool, block: block) -> &'a mut Full {
         // this is no more unsafe than accessing pool._blocks directly
         unsafe {
@@ -202,10 +217,6 @@ impl Full {
     fn index(&self) -> block {
         self._index & INDEX_BITMAP
     }
-
-    fn locked(&self) -> bool {
-        self._index & HIGH_INDEX_BIT == HIGH_INDEX_BIT
-    }
 }
 
 // ##################################################
@@ -216,11 +227,31 @@ impl<'a> RawPool<'a> {
         RawPool {
             last_index_used: indexes.len() - 1,
             indexes: indexes,
-            _freed: NULL_BLOCK,
+            _freed: BLOCK_NULL,
             heap_block: 0,
             total_used: 0,
-            _blocks: blocks,
+            _raw_blocks: blocks,
         }
+    }
+
+    /// raw pool size in blocks
+    pub fn len_blocks(&self) -> block {
+        self._raw_blocks.len()
+    }
+
+    /// raw pool size in bytes
+    pub fn size(&self) -> usize {
+        self.len_blocks() * mem::size_of::<Block>()
+    }
+
+    /// raw blocks remaining (fragmented or not)
+    pub fn blocks_remaining(&self) -> block {
+        self.len_blocks() - self.total_used
+    }
+
+    /// raw bytes remaining (fragmented or not)
+    pub fn bytes_remaining(&self) -> block {
+        self.blocks_remaining() * mem::size_of::<Block>()
     }
 
     /// get an unused index
@@ -241,19 +272,19 @@ impl<'a> RawPool<'a> {
     /// read the block as a Free block
     fn fblock(&self, block: block) -> &Free {
         unsafe {
-            mem::transmute(&self._blocks[block])
+            mem::transmute(&self._raw_blocks[block])
         }
     }
 
     /// same as fblock but for mut
     fn fblock_mut(&mut self, block: block) -> &mut Free {
         unsafe {
-            mem::transmute(&mut self._blocks[block])
+            mem::transmute(&mut self._raw_blocks[block])
         }
     }
 
     fn freed(&self) -> Option<block> {
-        if self._freed == NULL_BLOCK {
+        if self._freed == BLOCK_NULL {
             None
         } else {
             Some(self._freed)
@@ -263,7 +294,7 @@ impl<'a> RawPool<'a> {
     fn get_freed(&mut self, block: Option<block>) -> Option<&mut Free> {
         match block {
             Some(b) => {
-                assert!(b < self._blocks.len() - 1);
+                assert!(b < self.len_blocks() - 1);
                 Some(self.fblock_mut(b))
             }
             None => None,
@@ -274,9 +305,9 @@ impl<'a> RawPool<'a> {
         match free {
             Some(f) => {
                 self._freed = f.block;
-                f._prev = NULL_BLOCK;  // it is the beginning of the list
+                f._prev = BLOCK_NULL;  // it is the beginning of the list
             }
-            None => self._freed = NULL_BLOCK,
+            None => self._freed = BLOCK_NULL,
         }
     }
 
@@ -301,8 +332,8 @@ impl<'a> RawPool<'a> {
                     (*new_freed) = Free {
                         _blocks: (*freed).blocks() - blocks,
                         block: (*freed).block + blocks,
-                        _prev: NULL_BLOCK,
-                        _next: NULL_BLOCK,
+                        _prev: BLOCK_NULL,
+                        _next: BLOCK_NULL,
                     };
                     (*freed).append(self, &mut (*new_freed));
                     (*freed).remove(self);
@@ -322,18 +353,22 @@ impl<'a> RawPool<'a> {
         if blocks == 0 {
             return Err(Error::InvalidSize);
         }
-        if (self.total_used + blocks) as usize > self._blocks.len() {
+        if self.blocks_remaining() < blocks {
             return Err(Error::OutOfMemory);
         }
         let prev_used_index = self.last_index_used;
         let i = try!(self.get_unused_index());
         let block = if let Some(block) = self.get_freed_block(blocks) {
+            // we are reusing previously freed data
             block
-        } else if (self.heap_block + blocks) as usize <= self._blocks.len() {
+        } else if (self.heap_block + blocks) as usize <= self.len_blocks() {
+            // we are using data on the heap
             let block = self.heap_block;
             self.heap_block += blocks;
             block
         } else {
+            // we couldn't find enough contiguous memory (even though it exists)
+            // i.e. we are too fragmented
             self.last_index_used = prev_used_index;
             return Err(Error::Fragmented)
         };
@@ -345,7 +380,7 @@ impl<'a> RawPool<'a> {
         // set the full data in the block
         {
             let full = unsafe{Full::from_block_mut(self, block)};
-            full._blocks = blocks | HIGH_BLOCK_BIT;
+            full._blocks = blocks | BLOCK_HIGH_BIT;
             full._index = i;  // starts unlocked
         }
         Ok(i)
@@ -373,13 +408,13 @@ fn test_basic() {
     // assert that our bitmap is as expected
     let highbit = 1 << ((mem::size_of::<block>() * 8) - 1);
     assert_eq!(BLOCK_BITMAP, !highbit, "{:b} != {:b}", BLOCK_BITMAP, !highbit);
-    assert_eq!(HIGH_BLOCK_BIT, highbit, "{:b} != {:b}", HIGH_BLOCK_BIT, highbit);
+    assert_eq!(BLOCK_HIGH_BIT, highbit, "{:b} != {:b}", BLOCK_HIGH_BIT, highbit);
 
     // assert that Full.blocks() cancels out the high bit
     let expected = highbit ^ usize::max_value();
     let mut f = Full {
-        _blocks: NULL_BLOCK,
-        _index: NULL_INDEX,
+        _blocks: BLOCK_NULL,
+        _index: INDEX_NULL,
     };
     assert_eq!(f.blocks(), expected);
     f._blocks = highbit;
@@ -418,13 +453,12 @@ fn test_indexes() {
     assert_eq!(i, 3);
     let block;
     {
-        let index = &pool.indexes[i];
+        let index = unsafe {(*(&pool as *const RawPool)).indexes[i]};
         block = index.block().unwrap();
         assert_eq!(block, 0);
         unsafe {
-            assert_eq!(index.full(&pool).blocks(), 4);
-            assert_eq!(index.full(&pool)._blocks, HIGH_BLOCK_BIT | 4);
-
+            assert_eq!(index.full(&mut pool).blocks(), 4);
+            assert_eq!(index.full(&mut pool)._blocks, BLOCK_HIGH_BIT | 4);
         }
     }
 
@@ -451,12 +485,12 @@ fn test_indexes() {
     assert_eq!(i2, 4);
     let block2;
     {
-        let index2 = &pool.indexes[i2];
+        let index2 = unsafe {(*(&pool as *const RawPool)).indexes[i2]};
         block2 = index2.block().unwrap();
         assert_eq!(block2, 4);
         unsafe {
-            assert_eq!(index2.full(&pool).blocks(), 8);
-            assert_eq!(index2.full(&pool)._blocks, HIGH_BLOCK_BIT | 8);
+            assert_eq!(index2.full(&mut pool).blocks(), 8);
+            assert_eq!(index2.full(&mut pool)._blocks, BLOCK_HIGH_BIT | 8);
         }
     }
 
@@ -466,12 +500,13 @@ fn test_indexes() {
     assert_eq!(i3, 5);
     let block3;
     {
-        let index3 = &pool.indexes[i3];
+
+        let index3 = unsafe {(*(&pool as *const RawPool)).indexes[i3]};
         block3 = index3.block().unwrap();
         assert_eq!(block3, 0);
         unsafe {
-            assert_eq!(index3.full(&pool).blocks(), 2);
-            assert_eq!(index3.full(&pool)._blocks, HIGH_BLOCK_BIT | 2);
+            assert_eq!(index3.full(&mut pool).blocks(), 2);
+            assert_eq!(index3.full(&mut pool)._blocks, BLOCK_HIGH_BIT | 2);
         }
     }
     // tests related to the fact that i3 just overwrote the freed item
