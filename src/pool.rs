@@ -24,20 +24,27 @@ impl Index {
         }
     }
 
-    unsafe fn full(&self, pool: &Pool) -> &Full {
-        assert!(self._block != NULL_BLOCK);
-        Full::from_block(pool, self._block)
+    unsafe fn full<'a>(&self, pool: &'a Pool) -> &'a Full {
+        let block = match self.block() {
+            Some(b) => b,
+            None => unreachable!(),
+        };
+        Full::from_block(pool, block)
     }
 
     unsafe fn ptr(&self, pool: &Pool) -> *const u8 {
-        assert!(self._block != NULL_BLOCK);
-        let free = &pool.blocks[self._block];
+        let block = match self.block() {
+            Some(b) => b,
+            None => unreachable!(),
+        };
+        let free = &pool.blocks[block];
         let mut ptr: *const u8 = mem::transmute(free);
         ptr = ptr.offset(mem::size_of::<Full>() as isize);
         ptr
     }
 }
 
+// TODO: indexes and blocks need to be dynamically sized
 struct Pool {
     indexes: [Index; 256],   // actual pointers to the data
     last_index_used: usize,  // for speeding up finding indexes
@@ -49,9 +56,10 @@ struct Pool {
 
 impl Pool {
     fn new() -> Pool {
+        let indexes = [Index::default(); 256];
         Pool {
-            last_index_used: 0,
-            indexes: [Index::default(); 256],
+            last_index_used: indexes.len() - 1,
+            indexes: indexes,
             _freed: NULL_BLOCK,
             heap_block: 0,
             total_used: 0,
@@ -65,7 +73,7 @@ impl Pool {
         let mut i = (self.last_index_used + 1) % self.indexes.len();
         while i != self.last_index_used {
             let index = &self.indexes[i];
-            if index._block != NULL_BLOCK {
+            if index.block() == None {
                 self.last_index_used = i;
                 return Ok(i);
             }
@@ -330,4 +338,33 @@ fn test_basic() {
     assert_eq!(f.blocks(), highbit);
     f._blocks = 0;
     assert_eq!(f.blocks(), 0);
+}
+
+#[test]
+fn test_indexes() {
+    // test using raw indexes
+    let mut pool = Pool::new();
+    assert_eq!(pool.get_unused_index().unwrap(), 0);
+    assert_eq!(pool.get_unused_index().unwrap(), 1);
+    assert_eq!(pool.get_unused_index().unwrap(), 2);
+    // allocate an index
+    let i = pool.alloc_index(4).unwrap();
+    let block;
+    {
+        let index = &pool.indexes[i];
+        block = index.block().unwrap();
+        assert_eq!(block, 0);
+        unsafe {
+            assert_eq!(index.full(&pool).blocks(), 4);
+            assert_eq!(index.full(&pool)._blocks, HIGH_BLOCK_BIT | 4);
+
+        }
+    }
+    // deallocate the index
+    unsafe {
+        pool.dealloc_index(i);
+    }
+    assert_eq!(pool.indexes[i].block(), None);
+    assert_eq!(pool.blocks[block].blocks(), 4);
+    assert_eq!(pool.blocks[block]._blocks, 4);
 }

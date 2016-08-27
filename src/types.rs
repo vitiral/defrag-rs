@@ -10,6 +10,7 @@ pub const INDEX_BITMAP: index = !HIGH_INDEX_BIT;
 
 
 /// memory error codes
+#[derive(Debug, Copy, Clone)]
 pub enum Error {
     Fragmented,
     OutOfMemory,
