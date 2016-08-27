@@ -1,7 +1,13 @@
 pub use core;
 
-pub const HIGH_USIZE_BIT: usize = !((usize::max_value() << 1) >> 1);
-pub const FULL_BITMAP: usize = !HIGH_USIZE_BIT;
+pub const NULL_BLOCK: block = usize::max_value();
+pub const HIGH_BLOCK_BIT: block = !((block::max_value() << 1) >> 1);
+pub const BLOCK_BITMAP: block = !HIGH_BLOCK_BIT;
+
+pub const NULL_INDEX: index = usize::max_value();
+pub const HIGH_INDEX_BIT: index = !((index::max_value() << 1) >> 1);
+pub const INDEX_BITMAP: index = !HIGH_INDEX_BIT;
+
 
 /// memory error codes
 pub enum Error {
@@ -13,3 +19,4 @@ pub enum Error {
 
 pub type Result<T> = core::result::Result<T, Error>;
 pub type block = usize;
+pub type index = usize;

@@ -174,3 +174,13 @@ There are X bins of size N:
 
 when an allocation is selected, it knows it can get the value from the 
 size of the allocation (so O(1) allocations)
+
+
+# rust notes
+ - take a look at src/lib/liballoc/raw_vec.rs. It contains an implementation of
+     converting raw pointers to a full type. `from_raw_parts` is particularily
+     interesting
+ - this points to src/libcore/ptr.rs which has the `Unique` type
+ - it looks like, surprise surprise, I need double indirection. I don't know why
+     I didn't realize this. Esentially I need:
+       Rc -> Index -> Full
