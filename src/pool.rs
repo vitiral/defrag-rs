@@ -6,22 +6,26 @@ use core::mem;
 
 // ##################################################
 // # Struct Definitions
+#[derive(Default, Copy, Clone)]
+pub struct Block {
+    _data: Free,
+}
 
 #[derive(Debug, Copy, Clone)]
-struct Index {
+pub struct Index {
     _block: block,
 }
 
 /// The RawPool is the private container and manager for all allocated
 /// and freed data
 // TODO: indexes and blocks need to be dynamically sized
-struct RawPool<'a> {
-    indexes: &'a [Index],   // actual pointers to the data
+pub struct RawPool<'a> {
+    indexes: &'a mut [Index],   // actual pointers to the data
     last_index_used: usize,  // for speeding up finding indexes
     _freed: block,           // free values
     heap_block: block,       // the current location of the "heap"
     total_used: block,       // total memory currently used
-    blocks: [Free; 4096],    // actual data
+    _blocks: &'a mut [Block],    // actual data
 }
 
 /// the Free struct is a linked list of free values with
@@ -82,7 +86,7 @@ impl Index {
             Some(b) => b,
             None => unreachable!(),
         };
-        let free = &pool.blocks[block];
+        let free = pool.fblock(block);
         let mut ptr: *const u8 = mem::transmute(free);
         ptr = ptr.offset(mem::size_of::<Full>() as isize);
         ptr
@@ -155,7 +159,7 @@ impl Free {
         let pool = pool as *mut RawPool;
         unsafe {
             if let Some(n) = self.next() {
-                (*pool).blocks[n as usize].set_prev(&mut (*pool), Some(next));
+                (*pool).fblock_mut(n).set_prev(&mut (*pool), Some(next));
             }
             self.set_next(Some(next));
         }
@@ -177,14 +181,18 @@ impl Free {
 // # Full impls
 
 impl Full {
-    unsafe fn from_block_mut(pool: &mut RawPool, block: block) -> &mut Full {
-        let free = &mut pool.blocks[block];
-        mem::transmute(free)
+    fn from_block_mut<'a>(pool: &'a mut RawPool, block: block) -> &'a mut Full {
+        // this is no more unsafe than accessing pool._blocks directly
+        unsafe {
+            mem::transmute(pool.fblock_mut(block))
+        }
     }
 
-    unsafe fn from_block(pool: &RawPool, block: block) -> &Full {
-        let free = &pool.blocks[block];
-        mem::transmute(free)
+    fn from_block<'a>(pool: &'a RawPool, block: block) -> &'a Full {
+        // this is no more unsafe than accessing pool._blocks directly
+        unsafe {
+            mem::transmute(pool.fblock(block))
+        }
     }
 
     fn blocks(&self) -> block {
@@ -203,16 +211,15 @@ impl Full {
 // ##################################################
 // # RawPool impls
 
-impl RawPool {
-    fn new() -> RawPool {
-        let indexes = [Index::default(); 256];
+impl<'a> RawPool<'a> {
+    fn new(indexes:&'a mut [Index], blocks: &'a mut [Block]) -> RawPool<'a> {
         RawPool {
             last_index_used: indexes.len() - 1,
             indexes: indexes,
             _freed: NULL_BLOCK,
             heap_block: 0,
             total_used: 0,
-            blocks: [Free::default(); 4096],
+            _blocks: blocks,
         }
     }
 
@@ -231,6 +238,20 @@ impl RawPool {
         return Err(Error::OutOfIndexes);
     }
 
+    /// read the block as a Free block
+    fn fblock(&self, block: block) -> &Free {
+        unsafe {
+            mem::transmute(&self._blocks[block])
+        }
+    }
+
+    /// same as fblock but for mut
+    fn fblock_mut(&mut self, block: block) -> &mut Free {
+        unsafe {
+            mem::transmute(&mut self._blocks[block])
+        }
+    }
+
     fn freed(&self) -> Option<block> {
         if self._freed == NULL_BLOCK {
             None
@@ -242,8 +263,8 @@ impl RawPool {
     fn get_freed(&mut self, block: Option<block>) -> Option<&mut Free> {
         match block {
             Some(b) => {
-                assert!(b < self.blocks.len() - 1);
-                Some(&mut self.blocks[b as usize])
+                assert!(b < self._blocks.len() - 1);
+                Some(self.fblock_mut(b))
             }
             None => None,
         }
@@ -265,7 +286,7 @@ impl RawPool {
             None => return None,
         };
         loop {
-            let freed = &mut self.blocks[block as usize] as *mut Free;
+            let freed = self.fblock_mut(block) as *mut Free;
             unsafe {
                 // all unsafe operations are safe because we know that we are
                 // never changing more than one freed block at a time
@@ -275,7 +296,7 @@ impl RawPool {
                     return Some((*freed).block);
                 } else if (*freed).blocks() > blocks {
                     // use only the size that is needed, so append a new freed block
-                    let new_freed = &mut self.blocks[((*freed).block + blocks) as usize]
+                    let new_freed = self.fblock_mut((*freed).block + blocks)
                         as *mut Free;
                     (*new_freed) = Free {
                         _blocks: (*freed).blocks() - blocks,
@@ -301,14 +322,14 @@ impl RawPool {
         if blocks == 0 {
             return Err(Error::InvalidSize);
         }
-        if (self.total_used + blocks) as usize > self.blocks.len() {
+        if (self.total_used + blocks) as usize > self._blocks.len() {
             return Err(Error::OutOfMemory);
         }
         let prev_used_index = self.last_index_used;
         let i = try!(self.get_unused_index());
         let block = if let Some(block) = self.get_freed_block(blocks) {
             block
-        } else if (self.heap_block + blocks) as usize <= self.blocks.len() {
+        } else if (self.heap_block + blocks) as usize <= self._blocks.len() {
             let block = self.heap_block;
             self.heap_block += blocks;
             block
@@ -337,7 +358,7 @@ impl RawPool {
             Some(b) => b,
             None => unreachable!(),
         };
-        let freed = &mut self.blocks[block] as *mut Free;
+        let freed = self.fblock_mut(block) as *mut Free;
         (*freed)._blocks &= BLOCK_BITMAP;  // set first bit to 0
         (*freed).block = block;
         self.indexes[i] = Index::default();
@@ -383,7 +404,9 @@ fn test_basic() {
 #[test]
 fn test_indexes() {
     // test using raw indexes
-    let mut pool = RawPool::new();
+    let mut indexes = [Index::default(); 256];
+    let mut blocks = [Block::default(); 4096];
+    let mut pool = RawPool::new(&mut indexes, &mut blocks);
     assert_eq!(pool.get_unused_index().unwrap(), 0);
     assert_eq!(pool.get_unused_index().unwrap(), 1);
     assert_eq!(pool.get_unused_index().unwrap(), 2);
@@ -414,7 +437,7 @@ fn test_indexes() {
     {
         assert_eq!(pool.indexes[i].block(), None);
 
-        let freed = &pool.blocks[block];
+        let freed = pool.fblock(block);
         assert_eq!(freed.blocks(), 4);
         assert_eq!(freed._blocks, 4);
         assert_eq!(freed.prev(), None);
@@ -456,7 +479,7 @@ fn test_indexes() {
     assert_eq!(free_block, 2);
     {
         // free1 has moved
-        let free = pool.blocks[free_block];
+        let free = pool.fblock(free_block);
         assert_eq!(free.blocks(), 2);
         assert_eq!(free.prev(), None);
         assert_eq!(free.next(), None);
