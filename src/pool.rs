@@ -4,10 +4,55 @@
 use super::types::*;
 use core::mem;
 
+// ##################################################
+// # Struct Definitions
+
 #[derive(Debug, Copy, Clone)]
 struct Index {
     _block: block,
 }
+
+/// The RawPool is the private container and manager for all allocated
+/// and freed data
+// TODO: indexes and blocks need to be dynamically sized
+struct RawPool {
+    indexes: [Index; 256],   // actual pointers to the data
+    last_index_used: usize,  // for speeding up finding indexes
+    _freed: block,           // free values
+    heap_block: block,       // the current location of the "heap"
+    total_used: block,       // total memory currently used
+    blocks: [Free; 4096],    // actual data
+}
+
+/// the Free struct is a linked list of free values with
+/// the root as a size-bin in pool
+#[repr(packed)]
+#[derive(Debug, Copy, Clone)]
+struct Free {
+    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Full`
+    // The first bit of `_blocks` is always 0 for Free structs
+    _blocks: block,        // size of this freed memory
+    block: block,          // block location of this struct
+    _prev: block,          // location of previous freed memory
+    _next: block,          // location of next freed memory
+    // data after this (until block + blocks) is invalid
+}
+
+/// the Full struct only contains enough information about the data to
+/// allocate it
+#[repr(packed)]
+#[derive(Debug)]
+struct Full {
+    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Free`
+    // The first bit of blocks is 1 for Full structs
+    _blocks: block,        // size of this freed memory
+    _index: index,         // data which contains the index and the lock information
+    // space after this (until block + blocks) is invalid
+}
+
+
+// ##################################################
+// # Index impls
 
 impl core::default::Default for Index {
     fn default() -> Index {
@@ -24,7 +69,7 @@ impl Index {
         }
     }
 
-    unsafe fn full<'a>(&self, pool: &'a Pool) -> &'a Full {
+    unsafe fn full<'a>(&self, pool: &'a RawPool) -> &'a Full {
         let block = match self.block() {
             Some(b) => b,
             None => unreachable!(),
@@ -32,7 +77,7 @@ impl Index {
         Full::from_block(pool, block)
     }
 
-    unsafe fn ptr(&self, pool: &Pool) -> *const u8 {
+    unsafe fn ptr(&self, pool: &RawPool) -> *const u8 {
         let block = match self.block() {
             Some(b) => b,
             None => unreachable!(),
@@ -44,20 +89,124 @@ impl Index {
     }
 }
 
-// TODO: indexes and blocks need to be dynamically sized
-struct Pool {
-    indexes: [Index; 256],   // actual pointers to the data
-    last_index_used: usize,  // for speeding up finding indexes
-    _freed: block,           // free values
-    heap_block: block,       // the current location of the "heap"
-    total_used: block,       // total memory currently used
-    blocks: [Free; 4096],    // actual data
+// ##################################################
+// # Free impls
+
+impl Default for Free {
+    fn default() -> Free {
+        Free {
+            _blocks: 0,
+            block: NULL_BLOCK,
+            _prev: NULL_BLOCK,
+            _next: NULL_BLOCK,
+        }
+    }
 }
 
-impl Pool {
-    fn new() -> Pool {
+impl Free {
+    /// blocks accessor, handling any bitmaps
+    fn blocks(&self) -> block {
+        self._blocks
+    }
+
+    /// prev accessor, handling any bitmaps
+    fn prev(&self) -> Option<block> {
+        if self._prev == NULL_BLOCK {
+            None
+        } else {
+            Some(self._prev)
+        }
+    }
+
+    /// next accessor, handling any bitmaps
+    fn next(&self) -> Option<block> {
+        if self._next == NULL_BLOCK {
+            None
+        } else {
+            Some(self._next)
+        }
+    }
+
+    unsafe fn set_next(&mut self, next: Option<&mut Free>) {
+        match next {
+            Some(n) => {
+                self._next = n.block;
+                n._prev = self.block;
+            }
+            None => self._next = NULL_BLOCK,
+        }
+    }
+
+    /// set the prev freed block and set it's next to self
+    unsafe fn set_prev(&mut self, pool: &mut RawPool, prev: Option<&mut Free>) {
+        match prev {
+            Some(p) => {
+                self._prev = p.block;
+                p._next = self.block;
+            }
+            None => {
+                pool.set_freed(Some(self));
+            }
+        }
+    }
+
+    /// append a freed block after this one
+    pub fn append(&mut self, pool: &mut RawPool, next: &mut Free) {
+        let pool = pool as *mut RawPool;
+        unsafe {
+            if let Some(n) = self.next() {
+                (*pool).blocks[n as usize].set_prev(&mut (*pool), Some(next));
+            }
+            self.set_next(Some(next));
+        }
+    }
+
+    /// remove self from the freed pool
+    pub fn remove(&mut self, pool: &mut RawPool) {
+        let poolp = pool as *mut RawPool;
+        unsafe {
+            match (*poolp).get_freed(self.prev()) {
+                Some(p) => p.set_next(pool.get_freed(self.next())),
+                None => (*poolp).set_freed(pool.get_freed(self.next())),
+            }
+        }
+    }
+}
+
+// ##################################################
+// # Full impls
+
+impl Full {
+    unsafe fn from_block_mut(pool: &mut RawPool, block: block) -> &mut Full {
+        let free = &mut pool.blocks[block];
+        mem::transmute(free)
+    }
+
+    unsafe fn from_block(pool: &RawPool, block: block) -> &Full {
+        let free = &pool.blocks[block];
+        mem::transmute(free)
+    }
+
+    fn blocks(&self) -> block {
+        self._blocks & BLOCK_BITMAP
+    }
+
+    fn index(&self) -> block {
+        self._index & INDEX_BITMAP
+    }
+
+    fn locked(&self) -> bool {
+        self._index & HIGH_INDEX_BIT == HIGH_INDEX_BIT
+    }
+}
+
+// ##################################################
+// # RawPool impls
+
+impl RawPool {
+    fn new() -> RawPool {
         let indexes = [Index::default(); 256];
-        Pool {
+        RawPool {
             last_index_used: indexes.len() - 1,
             indexes: indexes,
             _freed: NULL_BLOCK,
@@ -148,7 +297,7 @@ impl Pool {
 
     /// allocate data with a specified number of blocks,
     /// including the half block required to store `Full` struct
-    fn alloc_index(&mut self, blocks: block) -> Result<index> {
+    pub fn alloc_index(&mut self, blocks: block) -> Result<index> {
         if blocks == 0 {
             return Err(Error::InvalidSize);
         }
@@ -182,7 +331,7 @@ impl Pool {
     }
 
     /// dealoc an index from the pool, this WILL corrupt any data that was there
-    unsafe fn dealloc_index(&mut self, i: index) {
+    pub unsafe fn dealloc_index(&mut self, i: index) {
         // get the size and location from the Index and clear it
         let block = match self.indexes[i].block() {
             Some(b) => b,
@@ -196,136 +345,7 @@ impl Pool {
     }
 }
 
-/// the Free struct is a linked list of free values with
-/// the root as a size-bin in pool
-#[repr(packed)]
-#[derive(Debug, Copy, Clone)]
-struct Free {
-    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Full`
-    // The first bit of `_blocks` is always 0 for Free structs
-    _blocks: block,        // size of this freed memory
-    block: block,          // block location of this struct
-    _prev: block,          // location of previous freed memory
-    _next: block,          // location of next freed memory
-    // data after this (until block + blocks) is invalid
-}
-
-impl Default for Free {
-    fn default() -> Free {
-        Free {
-            _blocks: 0,
-            block: NULL_BLOCK,
-            _prev: NULL_BLOCK,
-            _next: NULL_BLOCK,
-        }
-    }
-}
-
-impl Free {
-    /// blocks accessor, handling any bitmaps
-    fn blocks(&self) -> block {
-        self._blocks
-    }
-
-    /// prev accessor, handling any bitmaps
-    fn prev(&self) -> Option<block> {
-        if self._prev == NULL_BLOCK {
-            None
-        } else {
-            Some(self._prev)
-        }
-    }
-
-    /// next accessor, handling any bitmaps
-    fn next(&self) -> Option<block> {
-        if self._next == NULL_BLOCK {
-            None
-        } else {
-            Some(self._next)
-        }
-    }
-
-    unsafe fn set_next(&mut self, next: Option<&mut Free>) {
-        match next {
-            Some(n) => {
-                self._next = n.block;
-                n._prev = self.block;
-            }
-            None => self._next = NULL_BLOCK,
-        }
-    }
-
-    /// set the prev freed block and set it's next to self
-    unsafe fn set_prev(&mut self, pool: &mut Pool, prev: Option<&mut Free>) {
-        match prev {
-            Some(p) => {
-                self._prev = p.block;
-                p._next = self.block;
-            }
-            None => {
-                pool.set_freed(Some(self));
-            }
-        }
-    }
-
-    /// append a freed block after this one
-    fn append(&mut self, pool: &mut Pool, next: &mut Free) {
-        let pool = pool as *mut Pool;
-        unsafe {
-            if let Some(n) = self.next() {
-                (*pool).blocks[n as usize].set_prev(&mut (*pool), Some(next));
-            }
-            self.set_next(Some(next));
-        }
-    }
-
-    /// remove self from the freed pool
-    fn remove(&mut self, pool: &mut Pool) {
-        let poolp = pool as *mut Pool;
-        unsafe {
-            match (*poolp).get_freed(self.prev()) {
-                Some(p) => p.set_next(pool.get_freed(self.next())),
-                None => (*poolp).set_freed(pool.get_freed(self.next())),
-            }
-        }
-    }
-}
-
-/// the Full struct only contains enough information about the data to
-/// allocate it
-#[repr(packed)]
-#[derive(Debug)]
-struct Full {
-    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Free`
-    // The first bit of blocks is 1 for Full structs
-    _blocks: block,        // size of this freed memory
-    _index: index,         // data which contains the index and the lock information
-    // space after this (until block + blocks) is invalid
-}
-
-impl Full {
-    unsafe fn from_block_mut(pool: &mut Pool, block: block) -> &mut Full {
-        let free = &mut pool.blocks[block];
-        mem::transmute(free)
-    }
-
-    unsafe fn from_block(pool: &Pool, block: block) -> &Full {
-        let free = &pool.blocks[block];
-        mem::transmute(free)
-    }
-
-    fn blocks(&self) -> block {
-        self._blocks & BLOCK_BITMAP
-    }
-
-    fn index(&self) -> block {
-        self._index & INDEX_BITMAP
-    }
-
-    fn locked(&self) -> bool {
-        self._index & HIGH_INDEX_BIT == HIGH_INDEX_BIT
-    }
-}
+// Tests
 
 #[test]
 fn test_basic() {
@@ -363,7 +383,7 @@ fn test_basic() {
 #[test]
 fn test_indexes() {
     // test using raw indexes
-    let mut pool = Pool::new();
+    let mut pool = RawPool::new();
     assert_eq!(pool.get_unused_index().unwrap(), 0);
     assert_eq!(pool.get_unused_index().unwrap(), 1);
     assert_eq!(pool.get_unused_index().unwrap(), 2);
@@ -432,10 +452,13 @@ fn test_indexes() {
         }
     }
     // tests related to the fact that i3 just overwrote the freed item
-    assert_eq!(pool.freed().unwrap(), 2);
+    let free_block = pool.freed().unwrap();
+    assert_eq!(free_block, 2);
     {
         // free1 has moved
-        let free = pool.blocks[2];
+        let free = pool.blocks[free_block];
         assert_eq!(free.blocks(), 2);
+        assert_eq!(free.prev(), None);
+        assert_eq!(free.next(), None);
     }
 }

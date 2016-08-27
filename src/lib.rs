@@ -1,8 +1,9 @@
 #![no_std]
 #![feature(const_fn)]
 
-#[macro_use]
-extern crate std;
+#[cfg(test)]
+#[macro_use] extern crate std;
+#[cfg(test)] use std::prelude::*;
 
 mod types;
 mod pool;
