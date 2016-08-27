@@ -20,7 +20,7 @@ pub struct Index {
 /// and freed data
 // TODO: indexes and blocks need to be dynamically sized
 pub struct RawPool<'a> {
-    pub indexes: &'a mut [Index],   // actual pointers to the data
+    pub indexes: &'a mut [Index],   // does not move and stores movable block location of data
     last_index_used: usize,  // for speeding up finding indexes
     _freed: block,           // free values
     heap_block: block,       // the current location of the "heap"
@@ -73,7 +73,22 @@ impl Index {
         }
     }
 
-    pub unsafe fn full<'a>(&self, pool: &'a mut RawPool) -> &'a mut Full {
+    /// get size of Index DATA in bytes
+    pub fn size(&self, pool: &RawPool) -> usize {
+        unsafe {
+            self.full(pool).blocks() - mem::size_of::<Full>()
+        }
+    }
+
+    pub unsafe fn full<'a>(&self, pool: &'a RawPool) -> &'a Full {
+        let block = match self.block() {
+            Some(b) => b,
+            None => unreachable!(),
+        };
+        Full::from_block(pool, block)
+    }
+
+    pub unsafe fn full_mut<'a>(&self, pool: &'a mut RawPool) -> &'a mut Full {
         let block = match self.block() {
             Some(b) => b,
             None => unreachable!(),
@@ -93,7 +108,7 @@ impl Index {
     }
 }
 
-// ##################################################
+    // ##################################################
 // # Free impls
 
 impl Default for Free {
