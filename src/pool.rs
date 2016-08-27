@@ -367,4 +367,5 @@ fn test_indexes() {
     assert_eq!(pool.indexes[i].block(), None);
     assert_eq!(pool.blocks[block].blocks(), 4);
     assert_eq!(pool.blocks[block]._blocks, 4);
+    assert_eq!(pool.freed().unwrap(), block);
 }
