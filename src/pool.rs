@@ -3,6 +3,7 @@
 
 use super::types::*;
 use core::mem;
+use core::cell::UnsafeCell;
 
 // ##################################################
 // # Struct Definitions
@@ -20,12 +21,12 @@ pub struct Index {
 /// and freed data
 // TODO: indexes and blocks need to be dynamically sized
 pub struct RawPool<'a> {
-    pub indexes: &'a mut [Index],   // does not move and stores movable block location of data
+    _indexes: UnsafeCell<&'a mut [Index]>, // does not move and stores movable block location of data
     last_index_used: usize,  // for speeding up finding indexes
     _freed: block,           // free values
     heap_block: block,       // the current location of the "heap"
     total_used: block,       // total memory currently used
-    _raw_blocks: &'a mut [Block],    // actual data
+    _raw_blocks: UnsafeCell<&'a mut [Block]>,  // actual data
 }
 
 /// the Free struct is a linked list of free values with
@@ -206,11 +207,11 @@ impl<'a> RawPool<'a> {
     pub fn new(indexes:&'a mut [Index], blocks: &'a mut [Block]) -> RawPool<'a> {
         RawPool {
             last_index_used: indexes.len() - 1,
-            indexes: indexes,
+            _indexes: UnsafeCell::new(indexes),
             _freed: BLOCK_NULL,
             heap_block: 0,
             total_used: 0,
-            _raw_blocks: blocks,
+            _raw_blocks: UnsafeCell::new(blocks),
         }
     }
 
@@ -218,7 +219,11 @@ impl<'a> RawPool<'a> {
 
     /// raw pool size in blocks
     pub fn len_blocks(&self) -> block {
-        self._raw_blocks.len()
+        unsafe { (*self._raw_blocks.get()).len() }
+    }
+
+    pub fn len_indexes(&self) -> block {
+        unsafe { (*self._indexes.get()).len() }
     }
 
     /// raw pool size in bytes
@@ -236,7 +241,16 @@ impl<'a> RawPool<'a> {
         self.blocks_remaining() * mem::size_of::<Block>()
     }
 
+    /// get the index
+    pub fn index(&self, i: index) -> &Index {
+        unsafe { &(*self._indexes.get())[i] }
+    }
+
     // public unsafe API
+
+    pub unsafe fn index_mut(&self, i: index) -> &mut Index {
+        &mut (*self._indexes.get())[i]
+    }
 
     /// get the raw ptr to the data at block
     pub unsafe fn ptr(&self, block: block) -> *const u8 {
@@ -248,40 +262,35 @@ impl<'a> RawPool<'a> {
 
     /// read the block as a Free block
     pub fn freed(&self, block: block) -> &Free {
-        unsafe {
-            mem::transmute(&self._raw_blocks[block])
-        }
+        unsafe { mem::transmute(&(*self._raw_blocks.get())[block]) }
     }
 
     /// mut the block as a Free block
     pub unsafe fn freed_mut(&mut self, block: block) -> &mut Free {
-        mem::transmute(&mut self._raw_blocks[block])
+        mem::transmute(&mut (*self._raw_blocks.get())[block])
     }
 
     /// read the block as a Full block
     pub fn full(&self, block: block) -> &Full {
-        unsafe {
-            mem::transmute(&self._raw_blocks[block])
-        }
+        unsafe { mem::transmute(& (*self._raw_blocks.get())[block]) }
     }
 
     /// mut the block as a Full block
     pub unsafe fn full_mut(&mut self, block: block) -> &mut Full {
-        mem::transmute(&mut self._raw_blocks[block])
+        mem::transmute(&mut (*self._raw_blocks.get())[block])
     }
 
 
     /// get an unused index
     fn get_unused_index(&mut self) -> Result<index> {
         // TODO: this is currently pretty slow, maybe cache freed indexes?
-        let mut i = (self.last_index_used + 1) % self.indexes.len();
+        let mut i = (self.last_index_used + 1) % self.len_indexes();
         while i != self.last_index_used {
-            let index = &self.indexes[i];
-            if index.__block == BLOCK_NULL {
+            if self.index(i).__block == BLOCK_NULL {
                 self.last_index_used = i;
                 return Ok(i);
             }
-            i = (i + 1) % self.indexes.len();
+            i = (i + 1) % self.len_indexes();
         }
         return Err(Error::OutOfIndexes);
     }
@@ -366,13 +375,13 @@ impl<'a> RawPool<'a> {
             return Err(Error::Fragmented)
         };
         // set the index data
-        {
-            let index = &mut self.indexes[i];
+        unsafe {
+            let index = self.index_mut(i);
             index.__block = block
         }
         // set the full data in the block
-        {
-            let full = unsafe{self.full_mut(block)};
+        unsafe {
+            let full = self.full_mut(block);
             full._blocks = blocks | BLOCK_HIGH_BIT;
             full._index = i;  // starts unlocked
         }
@@ -382,11 +391,11 @@ impl<'a> RawPool<'a> {
     /// dealoc an index from the pool, this WILL corrupt any data that was there
     pub unsafe fn dealloc_index(&mut self, i: index) {
         // get the size and location from the Index and clear it
-        let block = self.indexes[i].block();
+        let block = self.index(i).block();
         let freed = self.freed_mut(block) as *mut Free;
         (*freed)._blocks &= BLOCK_BITMAP;  // set first bit to 0
         (*freed).block = block;
-        self.indexes[i] = Index::default();
+        *self.index_mut(i) = Index::default();
         self.set_freed_bin(Some(&mut *freed));
     }
 }
@@ -443,7 +452,7 @@ fn test_indexes() {
     assert_eq!(i, 3);
     let block;
     {
-        let index = unsafe {(*(&pool as *const RawPool)).indexes[i]};
+        let index = unsafe {(*(&pool as *const RawPool)).index(i)};
         assert_eq!(index.__block, 0);
         block = index.block();
         unsafe {
@@ -459,7 +468,7 @@ fn test_indexes() {
         pool.dealloc_index(i);
     }
     {
-        assert_eq!(pool.indexes[i].__block, BLOCK_NULL);
+        assert_eq!(pool.index(i).__block, BLOCK_NULL);
 
         let freed = pool.freed(block);
         assert_eq!(freed.blocks(), 4);
@@ -475,7 +484,7 @@ fn test_indexes() {
     assert_eq!(i2, 4);
     let block2;
     {
-        let index2 = unsafe {(*(&pool as *const RawPool)).indexes[i2]};
+        let index2 = unsafe {(*(&pool as *const RawPool)).index(i2)};
         assert_eq!(index2.__block, 4);
         block2 = index2.block();
         unsafe {
@@ -491,7 +500,7 @@ fn test_indexes() {
     let block3;
     {
 
-        let index3 = unsafe {(*(&pool as *const RawPool)).indexes[i3]};
+        let index3 = unsafe {(*(&pool as *const RawPool)).index(i3)};
         assert_eq!(index3.__block, 0);
         block3 = index3.block();
         unsafe {
