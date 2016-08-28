@@ -24,7 +24,7 @@ struct Pool<'a> {
 
 impl<'pool> Pool<'pool> {
     pub fn new(indexes:&'pool mut [Index], blocks: &'pool mut [Block]) -> Pool<'pool> {
-        Pool{raw: UnsafeCell::new(RawPool::new(indexes, blocks))}
+        Pool { raw: UnsafeCell::new(RawPool::new(indexes, blocks)) }
     }
 
     pub fn alloc<T>(&'pool self) -> Result<Mutex<'pool, T>> {
@@ -85,9 +85,9 @@ fn it_works() {
     let mut indexes = [Index::default(); 256];
     let mut blocks = [Block::default(); 4096];
     let mut pool = Pool::new(&mut indexes[..], &mut blocks[..]);
-    // let alloced = pool.alloc::<u32>();
-    // let unwrapped_alloc = alloced.unwrap();
-    // let locked = unwrapped_alloc.try_lock();
-    // let unwrapped_locked = locked.unwrap();
-    // assert_eq!(unwrapped_locked.deref(), &10);
+    let alloced = pool.alloc::<u32>();
+    let unwrapped_alloc = alloced.unwrap();
+    let locked = unwrapped_alloc.try_lock();
+    let unwrapped_locked = locked.unwrap();
+    assert_eq!(unwrapped_locked.deref(), &0x01010101);
 }
