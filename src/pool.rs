@@ -13,7 +13,7 @@ pub struct Block {
 
 #[derive(Debug, Copy, Clone)]
 pub struct Index {
-    _block: block,
+    __block: block,
 }
 
 /// The RawPool is the private container and manager for all allocated
@@ -60,15 +60,19 @@ pub struct Full {
 
 impl core::default::Default for Index {
     fn default() -> Index {
-        Index {_block: BLOCK_NULL}
+        Index {__block: BLOCK_NULL}
     }
 }
 
 impl Index {
     /// get size of Index DATA in bytes
+    pub fn block(&self) -> block {
+        self.__block
+    }
+
     pub fn size(&self, pool: &RawPool) -> usize {
         unsafe {
-            pool.full(self._block).blocks() - mem::size_of::<Full>()
+            pool.full(self.block()).blocks() - mem::size_of::<Full>()
         }
     }
 }
@@ -273,7 +277,7 @@ impl<'a> RawPool<'a> {
         let mut i = (self.last_index_used + 1) % self.indexes.len();
         while i != self.last_index_used {
             let index = &self.indexes[i];
-            if index._block == BLOCK_NULL {
+            if index.__block == BLOCK_NULL {
                 self.last_index_used = i;
                 return Ok(i);
             }
@@ -364,7 +368,7 @@ impl<'a> RawPool<'a> {
         // set the index data
         {
             let index = &mut self.indexes[i];
-            index._block = block
+            index.__block = block
         }
         // set the full data in the block
         {
@@ -378,7 +382,7 @@ impl<'a> RawPool<'a> {
     /// dealoc an index from the pool, this WILL corrupt any data that was there
     pub unsafe fn dealloc_index(&mut self, i: index) {
         // get the size and location from the Index and clear it
-        let block = self.indexes[i]._block;
+        let block = self.indexes[i].block();
         let freed = self.freed_mut(block) as *mut Free;
         (*freed)._blocks &= BLOCK_BITMAP;  // set first bit to 0
         (*freed).block = block;
@@ -440,11 +444,11 @@ fn test_indexes() {
     let block;
     {
         let index = unsafe {(*(&pool as *const RawPool)).indexes[i]};
-        block = index._block;
-        assert_eq!(block, 0);
+        assert_eq!(index.__block, 0);
+        block = index.block();
         unsafe {
-            assert_eq!(pool.full(index._block).blocks(), 4);
-            assert_eq!(pool.full(index._block)._blocks, BLOCK_HIGH_BIT | 4);
+            assert_eq!(pool.full(index.block()).blocks(), 4);
+            assert_eq!(pool.full(index.block())._blocks, BLOCK_HIGH_BIT | 4);
         }
     }
 
@@ -455,7 +459,7 @@ fn test_indexes() {
         pool.dealloc_index(i);
     }
     {
-        assert_eq!(pool.indexes[i]._block, BLOCK_NULL);
+        assert_eq!(pool.indexes[i].__block, BLOCK_NULL);
 
         let freed = pool.freed(block);
         assert_eq!(freed.blocks(), 4);
@@ -472,11 +476,11 @@ fn test_indexes() {
     let block2;
     {
         let index2 = unsafe {(*(&pool as *const RawPool)).indexes[i2]};
-        block2 = index2._block;
-        assert_eq!(block2, 4);
+        assert_eq!(index2.__block, 4);
+        block2 = index2.block();
         unsafe {
-            assert_eq!(pool.full(index2._block).blocks(), 8);
-            assert_eq!(pool.full(index2._block)._blocks, BLOCK_HIGH_BIT | 8);
+            assert_eq!(pool.full(index2.block()).blocks(), 8);
+            assert_eq!(pool.full(index2.block())._blocks, BLOCK_HIGH_BIT | 8);
         }
     }
 
@@ -488,11 +492,11 @@ fn test_indexes() {
     {
 
         let index3 = unsafe {(*(&pool as *const RawPool)).indexes[i3]};
-        block3 = index3._block;
-        assert_eq!(block3, 0);
+        assert_eq!(index3.__block, 0);
+        block3 = index3.block();
         unsafe {
-            assert_eq!(pool.full(index3._block).blocks(), 2);
-            assert_eq!(pool.full(index3._block)._blocks, BLOCK_HIGH_BIT | 2);
+            assert_eq!(pool.full(index3.block()).blocks(), 2);
+            assert_eq!(pool.full(index3.block())._blocks, BLOCK_HIGH_BIT | 2);
         }
     }
     // tests related to the fact that i3 just overwrote the freed item

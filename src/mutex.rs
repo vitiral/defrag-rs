@@ -24,6 +24,15 @@ struct Mutex<'a, T> {
     _type: PhantomData<T>,
 }
 
+impl<'pool, T: Sized> Mutex<'pool, T> {
+    pub fn try_lock(&'pool self) -> TryLockResult<MutexGuard<T>> {
+        // let index = self.pool.raw.indexes[self.index]
+        // let full = self.pool.raw.full_mut(index.block());
+        Ok(MutexGuard{__lock: self})
+    }
+}
+
+
 struct MutexGuard<'a, T: Sized + 'a> {
     // Maybe remove this 'a?
     __lock: &'a Mutex<'a, T>,
@@ -33,13 +42,6 @@ impl <'pool> Pool<'pool> {
     pub fn alloc<T>(&'pool self, i: usize) -> Result<Mutex<'pool, T>> {
         // Note: in real-life this will fail if not enough mem
         Ok(Mutex{index: i, pool: self, _type: PhantomData})
-    }
-}
-
-impl<'pool, T: Sized> Mutex<'pool, T> {
-    pub fn try_lock(&'pool self) -> TryLockResult<MutexGuard<T>> {
-        // Note: in real-life this will fail if the item is in use
-        Ok(MutexGuard{__lock: self})
     }
 }
 
