@@ -1,9 +1,11 @@
 //! contains all the logic related to the pool
 //! these are the "blocks" of the pool
 
-use super::types::*;
+use core;
 use core::mem;
 use core::cell::UnsafeCell;
+
+use super::types::*;
 
 // ##################################################
 // # Struct Definitions

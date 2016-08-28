@@ -1,4 +1,4 @@
-pub use core;
+use core;
 
 pub const BLOCK_NULL: block = index::max_value();
 pub const BLOCK_HIGH_BIT: block = !((block::max_value() << 1) >> 1);
