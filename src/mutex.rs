@@ -19,22 +19,20 @@ pub enum TryLockError {
 }
 
 struct Pool {
-    raw: RawPool,
+    raw: *mut RawPool,
 }
 
 impl Pool {
-    pub fn new(indexes:*mut Index, indexes_len: index,
-                blocks: *mut Block, blocks_len: block)
-               -> Pool {
-        Pool { raw: RawPool::new(indexes, indexes_len, blocks, blocks_len) }
+    pub fn new(raw: *mut RawPool) -> Pool {
+        Pool { raw: raw }
     }
 
-    pub fn alloc<T>(&mut self) -> Result<Mutex<T>> {
+    pub fn alloc<T>(&self) -> Result<Mutex<T>> {
         let actual_size = mem::size_of::<T>() + mem::size_of::<Full>();
         let blocks = actual_size / mem::size_of::<Block>() +
             if actual_size % mem::size_of::<Block>() != 0 {1} else {0};
         unsafe {
-            let i = try!(self.raw.alloc_index(blocks));
+            let i = try!((*self.raw).alloc_index(blocks));
             Ok(Mutex{index: i, pool: self, _type: PhantomData})
         }
     }
@@ -49,7 +47,7 @@ struct Mutex<'a, T> {
 impl<'a, T> Mutex<'a, T> {
     pub fn try_lock(&'a self) -> TryLockResult<MutexGuard<T>> {
         unsafe {
-            let pool = &self.pool.raw;
+            let pool = &*self.pool.raw;
             let block = pool.index(self.index).block();
             let full = pool.full_mut(block);
             if full.is_locked() {
@@ -74,7 +72,7 @@ impl<'a, T: 'a> Deref for MutexGuard<'a, T> {
 
     fn deref(&self) -> &T {
         unsafe {
-            let pool = &self.__lock.pool.raw;
+            let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
             mem::transmute(pool.ptr(index.block()))
         }
@@ -84,7 +82,7 @@ impl<'a, T: 'a> Deref for MutexGuard<'a, T> {
 impl<'a, T: 'a> DerefMut for MutexGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe {
-            let pool = &self.__lock.pool.raw;
+            let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
             mem::transmute(pool.ptr(index.block()))
         }
@@ -99,7 +97,10 @@ fn it_works() {
     let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
     let len_b = blocks.len();
     let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
-    let mut pool = Pool::new(iptr, len_i, bptr, len_b);
+    let mut raw_pool = RawPool::new(iptr, len_i, bptr, len_b);
+
+    let praw = &mut raw_pool as *mut RawPool;
+    let mut pool = Pool::new(praw);
 
     let expected = 0x01010101;
 
@@ -112,6 +113,17 @@ fn it_works() {
         *rmut = expected;
     }
     assert_eq!(unwrapped_locked.deref(), &expected);
+
+    let expected2 = -1000;
+    let alloced2 = pool.alloc::<i64>();
+    let unwrapped_alloc2 = alloced2.unwrap();
+    let locked2 = unwrapped_alloc2.try_lock();
+    let mut unwrapped_locked2 = locked2.unwrap();
+    {
+        let rmut = unwrapped_locked2.deref_mut();
+        *rmut = expected2;
+    }
+    assert_eq!(unwrapped_locked2.deref(), &expected2);
 
     println!("{:?}, {:?}", indexes[0].block(), blocks[0].dumb());
 }
