@@ -4,7 +4,7 @@ use core::mem;
 use core::marker::PhantomData;
 use core::ops::Deref;
 
-use super::types::Result;
+use super::types::{Result, index, block};
 use super::pool::{RawPool, Block, Index, Full};
 
 type TryLockResult<T> = core::result::Result<T, TryLockError>;
@@ -18,22 +18,23 @@ pub enum TryLockError {
     WouldBlock,
 }
 
-struct Pool<'a> {
-    raw: UnsafeCell<RawPool<'a>>,
+struct Pool {
+    raw: RawPool,
 }
 
-impl<'pool> Pool<'pool> {
-    pub fn new(indexes:&'pool mut [Index], blocks: &'pool mut [Block]) -> Pool<'pool> {
-        Pool { raw: UnsafeCell::new(RawPool::new(indexes, blocks)) }
+impl Pool {
+    pub fn new(indexes:*mut Index, indexes_len: index,
+                blocks: *mut Block, blocks_len: block)
+               -> Pool {
+        Pool { raw: RawPool::new(indexes, indexes_len, blocks, blocks_len) }
     }
 
-    pub fn alloc<T>(&'pool self) -> Result<Mutex<'pool, T>> {
+    pub fn alloc<T>(&mut self) -> Result<Mutex<T>> {
         let actual_size = mem::size_of::<T>() + mem::size_of::<Full>();
         let blocks = actual_size / mem::size_of::<Block>() +
             if actual_size % mem::size_of::<Block>() != 0 {1} else {0};
         unsafe {
-            let pool = self.raw.get();
-            let i = try!((*pool).alloc_index(blocks));
+            let i = try!(self.raw.alloc_index(blocks));
             Ok(Mutex{index: i, pool: self, _type: PhantomData})
         }
     }
@@ -41,16 +42,16 @@ impl<'pool> Pool<'pool> {
 
 struct Mutex<'a, T> {
     index: usize,
-    pool: &'a Pool<'a>,
+    pool: &'a Pool,
     _type: PhantomData<T>,
 }
 
-impl<'pool, T> Mutex<'pool, T> {
-    pub fn try_lock(&'pool self) -> TryLockResult<MutexGuard<T>> {
+impl<'a, T> Mutex<'a, T> {
+    pub fn try_lock(&'a self) -> TryLockResult<MutexGuard<T>> {
         unsafe {
-            let pool = self.pool.raw.get();
-            let block = (*pool).index(self.index).block();
-            let full = (*pool).full_mut(block);
+            let pool = &self.pool.raw;
+            let block = pool.index(self.index).block();
+            let full = pool.full_mut(block);
             if full.is_locked() {
                 Err(TryLockError::WouldBlock)
             } else {
@@ -68,14 +69,14 @@ struct MutexGuard<'a, T: 'a> {
     __lock: &'a Mutex<'a, T>,
 }
 
-impl<'mutex, T> Deref for MutexGuard<'mutex, T> {
+impl<'a, T: 'a> Deref for MutexGuard<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
         unsafe {
-            let pool = self.__lock.pool.raw.get();
-            let index = &(*pool).index(self.__lock.index);
-            mem::transmute((*pool).ptr(index.block()))
+            let pool = &self.__lock.pool.raw;
+            let index = &pool.index(self.__lock.index);
+            mem::transmute(pool.ptr(index.block()))
         }
     }
 }
@@ -84,7 +85,12 @@ impl<'mutex, T> Deref for MutexGuard<'mutex, T> {
 fn it_works() {
     let mut indexes = [Index::default(); 256];
     let mut blocks = [Block::default(); 4096];
-    let mut pool = Pool::new(&mut indexes[..], &mut blocks[..]);
+    let len_i = indexes.len();
+    let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
+    let len_b = blocks.len();
+    let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
+    let mut pool = Pool::new(iptr, len_i, bptr, len_b);
+
     let alloced = pool.alloc::<u32>();
     let unwrapped_alloc = alloced.unwrap();
     let locked = unwrapped_alloc.try_lock();

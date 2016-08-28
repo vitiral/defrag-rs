@@ -3,7 +3,6 @@
 
 use core;
 use core::mem;
-use core::cell::UnsafeCell;
 
 use super::types::*;
 
@@ -22,20 +21,22 @@ pub struct Index {
 /// The RawPool is the private container and manager for all allocated
 /// and freed data
 // TODO: indexes and blocks need to be dynamically sized
-pub struct RawPool<'a> {
-    _indexes: UnsafeCell<&'a mut [Index]>, // does not move and stores movable block location of data
+pub struct RawPool {
     last_index_used: usize,  // for speeding up finding indexes
     _freed: block,           // free values
     heap_block: block,       // the current location of the "heap"
     total_used: block,       // total memory currently used
-    _raw_blocks: UnsafeCell<&'a mut [Block]>,  // actual data
+    _indexes: *mut Index,    // does not move and stores movable block location of data
+    _indexes_len: index,     // len of indexes
+    _blocks: *mut Block,     // actual data
+    _blocks_len: block,      // len of blocks
 }
 
 /// the Free struct is a linked list of free values with
 /// the root as a size-bin in pool
 #[repr(packed)]
 #[derive(Debug, Copy, Clone)]
-struct Free {
+pub struct Free {
     // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Full`
     // The first bit of `_blocks` is always 0 for Free structs
     _blocks: block,        // size of this freed memory
@@ -205,15 +206,20 @@ impl Full {
 // ##################################################
 // # RawPool impls
 
-impl<'a> RawPool<'a> {
-    pub fn new(indexes:&'a mut [Index], blocks: &'a mut [Block]) -> RawPool<'a> {
+impl RawPool {
+    pub fn new(indexes:*mut Index, indexes_len: index,
+               blocks: *mut Block, blocks_len: block)
+               -> RawPool {
         RawPool {
-            last_index_used: indexes.len() - 1,
-            _indexes: UnsafeCell::new(indexes),
+            last_index_used: indexes_len - 1,
             _freed: BLOCK_NULL,
             heap_block: 0,
             total_used: 0,
-            _raw_blocks: UnsafeCell::new(blocks),
+            _indexes: indexes,
+            _indexes_len: indexes_len,
+            _blocks: blocks,
+            _blocks_len: blocks_len,
+
         }
     }
 
@@ -221,11 +227,11 @@ impl<'a> RawPool<'a> {
 
     /// raw pool size in blocks
     pub fn len_blocks(&self) -> block {
-        unsafe { (*self._raw_blocks.get()).len() }
+        self._blocks_len
     }
 
     pub fn len_indexes(&self) -> block {
-        unsafe { (*self._indexes.get()).len() }
+        self._indexes_len
     }
 
     /// raw pool size in bytes
@@ -245,13 +251,17 @@ impl<'a> RawPool<'a> {
 
     /// get the index
     pub fn index(&self, i: index) -> &Index {
-        unsafe { &(*self._indexes.get())[i] }
+        unsafe {
+            let ptr = self._indexes.offset(i as isize);
+            mem::transmute(ptr)
+        }
     }
 
     // public unsafe API
 
     pub unsafe fn index_mut(&self, i: index) -> &mut Index {
-        &mut (*self._indexes.get())[i]
+        let ptr = self._indexes.offset(i as isize);
+        mem::transmute(ptr)
     }
 
     /// get the raw ptr to the data at block
@@ -264,24 +274,31 @@ impl<'a> RawPool<'a> {
 
     /// read the block as a Free block
     pub fn freed(&self, block: block) -> &Free {
-        unsafe { mem::transmute(&(*self._raw_blocks.get())[block]) }
+        unsafe {
+            let ptr = self._blocks.offset(block as isize);
+            mem::transmute(ptr)
+        }
     }
 
     /// mut the block as a Free block
-    pub unsafe fn freed_mut(&mut self, block: block) -> &mut Free {
-        mem::transmute(&mut (*self._raw_blocks.get())[block])
+    pub unsafe fn freed_mut(&self, block: block) -> &mut Free {
+        let ptr = self._blocks.offset(block as isize);
+        mem::transmute(ptr)
     }
 
     /// read the block as a Full block
     pub fn full(&self, block: block) -> &Full {
-        unsafe { mem::transmute(& (*self._raw_blocks.get())[block]) }
+        unsafe {
+            let ptr = self._blocks.offset(block as isize);
+            mem::transmute(ptr)
+        }
     }
 
     /// mut the block as a Full block
-    pub unsafe fn full_mut(&mut self, block: block) -> &mut Full {
-        mem::transmute(&mut (*self._raw_blocks.get())[block])
+    pub unsafe fn full_mut(&self, block: block) -> &mut Full {
+        let ptr = self._blocks.offset(block as isize);
+        mem::transmute(ptr)
     }
-
 
     /// get an unused index
     fn get_unused_index(&mut self) -> Result<index> {
@@ -438,11 +455,16 @@ fn test_basic() {
 }
 
 #[test]
+/// test using raw indexes
 fn test_indexes() {
-    // test using raw indexes
     let mut indexes = [Index::default(); 256];
     let mut blocks = [Block::default(); 4096];
-    let mut pool = RawPool::new(&mut indexes, &mut blocks);
+    let len_i = indexes.len();
+    let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
+    let len_b = blocks.len();
+    let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
+
+    let mut pool = RawPool::new(iptr, len_i, bptr, len_b);
     assert_eq!(pool.get_unused_index().unwrap(), 0);
     assert_eq!(pool.get_unused_index().unwrap(), 1);
     assert_eq!(pool.get_unused_index().unwrap(), 2);
