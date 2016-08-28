@@ -96,4 +96,6 @@ fn it_works() {
     let locked = unwrapped_alloc.try_lock();
     let unwrapped_locked = locked.unwrap();
     assert_eq!(unwrapped_locked.deref(), &0x01010101);
+
+    println!("{:?}, {:?}", indexes[0], blocks[0]);
 }
