@@ -2,7 +2,7 @@ use core;
 use core::cell::UnsafeCell;
 use core::mem;
 use core::marker::PhantomData;
-use core::ops::Deref;
+use core::ops::{Deref, DerefMut};
 
 use super::types::{Result, index, block};
 use super::pool::{RawPool, Block, Index, Full};
@@ -81,6 +81,16 @@ impl<'a, T: 'a> Deref for MutexGuard<'a, T> {
     }
 }
 
+impl<'a, T: 'a> DerefMut for MutexGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe {
+            let pool = &self.__lock.pool.raw;
+            let index = &pool.index(self.__lock.index);
+            mem::transmute(pool.ptr(index.block()))
+        }
+    }
+}
+
 #[test]
 fn it_works() {
     let mut indexes = [Index::default(); 256];
@@ -91,11 +101,17 @@ fn it_works() {
     let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
     let mut pool = Pool::new(iptr, len_i, bptr, len_b);
 
+    let expected = 0x01010101;
+
     let alloced = pool.alloc::<u32>();
     let unwrapped_alloc = alloced.unwrap();
     let locked = unwrapped_alloc.try_lock();
-    let unwrapped_locked = locked.unwrap();
-    assert_eq!(unwrapped_locked.deref(), &0x01010101);
+    let mut unwrapped_locked = locked.unwrap();
+    {
+        let rmut = unwrapped_locked.deref_mut();
+        *rmut = expected;
+    }
+    assert_eq!(unwrapped_locked.deref(), &expected);
 
-    println!("{:?}, {:?}", indexes[0], blocks[0]);
+    println!("{:?}, {:?}", indexes[0].block(), blocks[0].dumb());
 }

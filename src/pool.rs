@@ -13,6 +13,12 @@ pub struct Block {
     _data: Free,
 }
 
+impl Block {
+    pub fn dumb(&self) -> &'static str {
+        "what"
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct Index {
     __block: block,
