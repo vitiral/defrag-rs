@@ -21,7 +21,7 @@ pub enum BlockType {
     Full,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub struct Block {
     _a: Free,
@@ -79,7 +79,7 @@ impl Default for Block {
 
 /// Index provides a non-moving location in memory for userspace
 /// to reference. There is a limited number of indexes.
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
 pub struct Index {
     _block: block,
@@ -113,7 +113,7 @@ impl Index {
 /// it contains only the size and a back-reference to the index
 /// that references it.
 /// It also contains the lock information inside it's index.
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Debug)]
 pub struct Full {
     // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Free`
