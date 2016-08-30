@@ -1,5 +1,9 @@
 # defrag: fragmentation-free memory manager for microcontrollers
 
+**This library is in the pre-Alpha stage and does not currently implement all
+features. It is recommended NOT to use it at this time. Developers and comments
+are always welcome.**
+
 **defrag** is a minature memory manager that aims to eliminate the primary reason
 NOT to use dynamic memory on microcontrollers -- that your memory might become
 fragmented. **defrag** provides an ergonomic api for memory use modeled
