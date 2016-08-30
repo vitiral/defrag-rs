@@ -257,12 +257,12 @@ impl FreedRoot {
         if let Some(cur_root) = self.root_mut(&mut *(pool as *mut RawPool)) {
             cur_root.set_prev(pool, Some(freed));
         }
-        freed.set_prev(pool, None); // TODO: this is probably not necessary
+        freed._prev = BLOCK_NULL;  // TODO: this is probably not necessary
         self._root = freed.block();
     }
 }
 
-const NUM_BINS: u8 = 8;
+const NUM_BINS: u8 = 7;
 
 /// the FreedBins provide simple and fast access to freed data
 #[derive(Default)]
@@ -289,7 +289,8 @@ impl FreedBins {
     /// insert a Free block into a freed bin
     unsafe fn insert(&mut self, pool: &mut RawPool, freed: &mut Free) {
         self.len += 1;
-        self.bins[self.get_insert_bin(freed.blocks()) as usize].insert_root(pool, freed);
+        let bin = self.get_insert_bin(freed.blocks());
+        self.bins[bin as usize].insert_root(pool, freed);
     }
 
     /// get a block of the requested size from the freed bins,
@@ -561,6 +562,7 @@ impl RawPool {
         let freed = self.freed_mut(block) as *mut Free;
         (*freed)._blocks &= BLOCK_BITMAP;  // set first bit to 0
         (*freed)._block = block;
+        (*freed)._next = BLOCK_NULL;
 
         let selfptr = self as *mut RawPool;
         (*selfptr).freed_bins.insert(self, &mut *freed);
