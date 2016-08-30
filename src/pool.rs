@@ -293,6 +293,34 @@ impl FreedBins {
         self.bins[bin as usize].insert_root(pool, freed);
     }
 
+    /// consume partof the freed value
+    /// this splits the freed value (or just removes if it the exact requested size)
+    /// and removes it from being tracked by the bin
+    unsafe fn consume_partof(&mut self, pool: &mut RawPool, freed: &mut Free, blocks: block) {
+        // all unsafe operations are safe because we know that we are
+        // never changing more than one freed block at a time
+        let old_blocks = freed.blocks();
+        if old_blocks == blocks {
+            // perfectly equal, consumes freed block
+            let old_block = freed.block();
+            freed.remove(pool);
+        } else {
+            // use only the size that is needed, so append a new freed block
+            let old_block = freed.block();
+            let new_block = old_block + blocks;
+            let new_freed = pool.freed_mut(new_block)
+                as *mut Free;
+            (*new_freed) = Free {
+                _blocks: old_blocks - blocks,
+                _block: new_block,
+                _prev: BLOCK_NULL,
+                _next: BLOCK_NULL,
+            };
+            freed.remove(pool); // has to come before insert
+            self.insert(pool, &mut *new_freed);
+        }
+    }
+
     /// get a block of the requested size from the freed bins,
     /// removing it from the freed bins
     unsafe fn pop(&mut self, pool: &mut RawPool, blocks: block) -> Option<&mut Free>{
@@ -313,33 +341,26 @@ impl FreedBins {
             _            => 6,
         };
         let poolptr = pool as *mut RawPool;
-        for b in bin..NUM_BINS {
-            if let Some(out) = self.bins[b as usize].root_mut(&mut *(pool as *mut RawPool)) {
+        for b in bin..(NUM_BINS - 1) {
+            let poolptr = pool as *mut RawPool;
+            if let Some(out) = self.bins[b as usize].root_mut(&mut *poolptr) {
                 // we have found freed data that is >= the size we need
-                // all unsafe operations are safe because we know that we are
-                // never changing more than one freed block at a time
-                let old_blocks = out.blocks();
-                if old_blocks == blocks {
-                    // perfectly equal, consumes freed block
-                    let old_block = out.block();
-                    out.remove(pool);
-                    return Some(out);
-                } else {
-                    // use only the size that is needed, so append a new freed block
-                    let old_block = out.block();
-                    let new_block = old_block + blocks;
-                    let new_freed = pool.freed_mut(new_block)
-                        as *mut Free;
-                    (*new_freed) = Free {
-                        _blocks: old_blocks - blocks,
-                        _block: new_block,
-                        _prev: BLOCK_NULL,
-                        _next: BLOCK_NULL,
-                    };
-                    out.remove(pool);
-                    self.insert(pool, &mut *new_freed);
+                self.consume_partof(pool, out, blocks);
+                return Some(out);
+            }
+        }
+        // failed to get in any of the smaller bins (or the data is too large)
+        // have to search item by item in the final (largest) bin.
+        if let Some(mut out) = self.bins[(NUM_BINS - 1) as usize].root_mut(&mut *poolptr) {
+            loop {
+                if out.blocks() >= blocks {
+                    self.consume_partof(pool, out, blocks);
                     return Some(out);
                 }
+                let out = match out.next() {
+                    Some(o) => o,
+                    None => return None,
+                };
             }
         }
         None
