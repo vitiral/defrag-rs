@@ -173,7 +173,6 @@ impl Free {
         let pool = pool as *mut RawPool;
         if let Some(n) = self.next() {
             // set prev of the next freed block (if it exists)
-            println!("has next...?");
             (*pool).freed_mut(n).set_prev(&mut (*pool), Some(next));
         }
         self.set_next(Some(next));
@@ -417,11 +416,8 @@ impl RawPool {
                         _prev: BLOCK_NULL,
                         _next: BLOCK_NULL,
                     };
-                    println!("new freed: {:?}", *new_freed);
                     (*freed).append(self, &mut (*new_freed));
-                    println!("new freed: {:?}", *new_freed);
                     (*freed).remove(self);
-                    println!("new freed: {:?}", *new_freed);
                     return Some(old_block);
                 }
                 block = match (*freed).next() {
