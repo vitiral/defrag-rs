@@ -1,4 +1,4 @@
-# defrag-rs: the rust defragmenting memory manager for micro-controllers
+# defrag: fragmentation-free memory manager for microcontrollers
 
 **defrag** is a minature memory manager that aims to eliminate the primary reason
 NOT to use dynamic memory on microcontrollers -- that your memory might become
