@@ -15,11 +15,60 @@ use super::free::{FreedBins, Free};
 
 // a single block, currently == 2 Free blocks which
 // is 128 bits
+
+pub enum BlockType {
+    Free,
+    Full,
+}
+
 #[repr(packed)]
 #[derive(Copy, Clone)]
 pub struct Block {
     _a: Free,
     _b: Free,
+}
+
+impl Block {
+    pub unsafe fn next_mut(&mut self, pool: &mut RawPool) -> Option<&mut Block> {
+        let blocks = match self.ty() {
+            BlockType::Free => self.as_free().blocks(),
+            BlockType::Full => self.as_full().blocks(),
+        };
+        let ptr = self as *mut Block;
+        Some(mem::transmute(ptr.offset(blocks as isize)))
+    }
+
+    pub fn ty(&self) -> BlockType {
+        if self._a._blocks & BLOCK_HIGH_BIT == 0 {
+            BlockType::Free
+        } else {
+            BlockType::Full
+        }
+    }
+
+    // pub unsafe fn convert_mut(&mut self) -> &mut BlockType {
+        
+    // }
+
+    pub unsafe fn as_free(&self) -> &Free {
+        let ptr = self as *const Block;
+        mem::transmute(ptr)
+    }
+
+    pub unsafe fn as_free_mut(&mut self) -> &mut Free {
+        let ptr = self as *mut Block;
+        mem::transmute(ptr)
+    }
+
+    pub unsafe fn as_full(&self) -> &Full {
+        let ptr = self as *const Block;
+        mem::transmute(ptr)
+    }
+
+    pub unsafe fn as_full_mut(&mut self) -> &mut Full {
+        let ptr = self as *mut Block;
+        mem::transmute(ptr)
+    }
 }
 
 impl Default for Block {
@@ -220,6 +269,15 @@ impl RawPool {
         let mut ptr: *const u8 = mem::transmute(free);
         ptr = ptr.offset(mem::size_of::<Full>() as isize);
         ptr
+    }
+
+    /// get the pointer to the first block
+    pub unsafe fn first_block(&mut self) -> Option<*mut Block> {
+        if self.heap_block == 0 {
+            None
+        } else {
+            Some(self._blocks)
+        }
     }
 
     /// read the block as a Free block

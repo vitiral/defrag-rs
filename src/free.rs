@@ -125,6 +125,11 @@ impl Free {
             }
         }
     }
+
+    /// combine all contiguous freed block together.
+    fn combine(&mut self, pool: &mut RawPool) {
+
+    }
 }
 
 
