@@ -1,4 +1,4 @@
-# tinymem Developer Documentation
+# defrag Developer Documentation
 
 ## Table of Contents
 - [Basic Theory](#basic-theory)
@@ -8,16 +8,16 @@
 
 ## Basic Theory
 
-The first thing to understand is that tinymem is created to be simple. The goal 
+The first thing to understand is that **defrag** is created to be simple. The goal 
 is to get a defragmenting memory manager working and worry about performance 
-later. Despite this fact, most of the features of tinymem are already designed 
+later. Despite this fact, most of the features of **defrag** are already designed 
 to work relatively fast. This is necessary, as you could easily spend billions 
 of CPU cycles defragmenting memory with a poorly designed system. For this 
-reason, the initial implementation of tinymem carefully balances simplicity with 
+reason, the initial implementation of **defrag** carefully balances simplicity with 
 speed, opting for the simpler solution when it is “fast enough.” (at least for 
 now)
 
-Before going into the inner workings of tinymem, let’s first go over the goals 
+Before going into the inner workings of **defrag**, let’s first go over the goals 
 of a mico-memory manager (in order of importance):
 
 - easy to use
@@ -71,17 +71,17 @@ If only we could move C without breaking the user’s program, then it should be
 relatively simple to defragment memory... 
 
 This is the first thing you have to understand when trying to understand 
-tinymem. tinymem reduces all of the issues with memory defragmentation into a 
+**defrag**. **defrag** reduces all of the issues with memory defragmentation into a 
 single problem: I can’t move memory in the heap when I want to. 
 
-To solve this problem, tinymem simply circumvents it. It allows you to move 
+To solve this problem, **defrag** simply circumvents it. It allows you to move 
 block C backwards by putting an application layer between the user’s code and 
 access to pointer C. 
 
 
 ## Defragmentation
 
-Being able to fully defragment memory is the primary feature of tinymem that
+Being able to fully defragment memory is the primary feature of **defrag** that
 differentiates it from other memory managers. The current implementation does
 it very simply. 
 
@@ -133,7 +133,7 @@ a flag will be set to require a remake of the freed bins
 One of the most significant problems for u-memory managers is storing
 which values have been freed.
 
-To do this, tinymem uses a trick: all allocated values MUST be at least
+To do this, **defrag** uses a trick: all allocated values MUST be at least
 2 indexes in size. Then, when a value is freed it's first 2-index-size
 is used to store the previous and the next free index.
 
