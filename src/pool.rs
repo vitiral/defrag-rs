@@ -14,10 +14,14 @@ use super::types::*;
 
 // ##################################################
 // # Struct Definitions
+
+// a single block, currently == 2 Free blocks which
+// is 128 bits
 #[repr(packed)]
 #[derive(Copy, Clone)]
 pub struct Block {
     _data: Free,
+    _a: Free,
 }
 
 impl Block {
@@ -28,7 +32,7 @@ impl Block {
 
 impl Default for Block {
     fn default() -> Block {
-        Block {_data: Free {_blocks: 0, _block: 0, _prev: 0, _next: 0}}
+        unsafe { mem::zeroed() }
     }
 }
 
@@ -42,7 +46,7 @@ pub struct Index {
 /// and freed data
 // TODO: indexes and blocks need to be dynamically sized
 pub struct RawPool {
-    last_index_used: usize,  // for speeding up finding indexes
+    last_index_used: index,  // for speeding up finding indexes
     _freed: block,           // free values
     heap_block: block,       // the current location of the "heap"
     total_used: block,       // total memory currently used
@@ -97,7 +101,8 @@ impl Index {
     /// get size of Index DATA in bytes
     pub fn size(&self, pool: &RawPool) -> usize {
         unsafe {
-            pool.full(self.block()).blocks() - mem::size_of::<Full>()
+            pool.full(self.block()).blocks() as usize * mem::size_of::<Block>()
+                - mem::size_of::<Full>()
         }
     }
 }
@@ -233,6 +238,12 @@ impl RawPool {
     pub unsafe fn new(indexes: *mut Index, indexes_len: index,
                blocks: *mut Block, blocks_len: block)
                -> RawPool {
+        if indexes_len > index::max_value() / 2 {
+            panic!("indexes_len too large");
+        }
+        if blocks_len > block::max_value() / 2 {
+            panic!("blocks_len too large");
+        }
         // initialize all indexes to INDEX_NULL
         let mut ptr = indexes;
         for _ in 0..indexes_len {
@@ -273,7 +284,7 @@ impl RawPool {
 
     /// raw pool size in bytes
     pub fn size(&self) -> usize {
-        self.len_blocks() * mem::size_of::<Block>()
+        self.len_blocks() as usize * mem::size_of::<Block>()
     }
 
     /// raw blocks remaining (fragmented or not)
@@ -282,8 +293,8 @@ impl RawPool {
     }
 
     /// raw bytes remaining (fragmented or not)
-    pub fn bytes_remaining(&self) -> block {
-        self.blocks_remaining() * mem::size_of::<Block>()
+    pub fn bytes_remaining(&self) -> usize {
+        self.blocks_remaining() as usize * mem::size_of::<Block>()
     }
 
     /// get the index
@@ -442,7 +453,7 @@ impl RawPool {
         let block = if let Some(block) = self.get_freed_block(blocks) {
             // we are reusing previously freed data
             block
-        } else if (self.heap_block + blocks) as usize <= self.len_blocks() {
+        } else if (self.heap_block + blocks) <= self.len_blocks() {
             // we are using data on the heap
             let block = self.heap_block;
             self.heap_block += blocks;
@@ -490,7 +501,7 @@ fn test_basic() {
     assert_eq!(BLOCK_HIGH_BIT, highbit, "{:b} != {:b}", BLOCK_HIGH_BIT, highbit);
 
     // assert that Full.blocks() cancels out the high bit
-    let expected = highbit ^ usize::max_value();
+    let expected = highbit ^ block::max_value();
     let mut f = Full {
         _blocks: BLOCK_NULL,
         _index: INDEX_NULL,
@@ -503,12 +514,12 @@ fn test_basic() {
 
     // assert that Free.blocks() DOESN'T cancel out the high bit (not necessary)
     let mut f = Free {
-        _blocks: usize::max_value(),
+        _blocks: block::max_value(),
         _block: 0,
         _prev: 0,
         _next: 0,
     };
-    assert_eq!(f.blocks(), usize::max_value());
+    assert_eq!(f.blocks(), block::max_value());
     f._blocks = highbit;
     assert_eq!(f.blocks(), highbit);
     f._blocks = 0;
@@ -521,12 +532,10 @@ fn test_indexes() {
     unsafe {
     let mut indexes = [Index::default(); 256];
     let mut blocks = [Block::default(); 4096];
-    let len_i = indexes.len();
     let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
-    let len_b = blocks.len();
     let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
 
-    let mut pool = RawPool::new(iptr, len_i, bptr, len_b);
+    let mut pool = RawPool::new(iptr, indexes.len() as index, bptr, blocks.len() as block);
     assert_eq!(pool.get_unused_index().unwrap(), 0);
     assert_eq!(pool.get_unused_index().unwrap(), 1);
     assert_eq!(pool.get_unused_index().unwrap(), 2);

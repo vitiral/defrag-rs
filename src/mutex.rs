@@ -23,7 +23,7 @@ struct Pool {
 }
 
 /// return the ceiling of a / b
-fn ceil(a: block, b: block) -> block {
+fn ceil(a: usize, b: usize) -> usize {
     a / b + (if a % b != 0 {1} else {0})
 }
 
@@ -35,23 +35,23 @@ impl Pool {
     pub fn alloc<T>(&self) -> Result<Mutex<T>> {
         unsafe {
             let actual_size: usize = mem::size_of::<Full>() + mem::size_of::<T>();
-            if actual_size > (*self.raw).len_blocks() {
+            let blocks = ceil(actual_size, mem::size_of::<Block>());
+            if blocks > (*self.raw).len_blocks() as usize {
                 return Err(Error::InvalidSize);
             }
-            let blocks = ceil(actual_size, mem::size_of::<Block>());
-            let i = try!((*self.raw).alloc_index(blocks));
+            let i = try!((*self.raw).alloc_index(blocks as u16));
             Ok(Mutex{index: i, pool: self, _type: PhantomData})
         }
     }
 
     pub fn alloc_slice<T>(&self, len: block) -> Result<SliceMutex<T>> {
         unsafe {
-            let actual_size: usize = mem::size_of::<Full>() + mem::size_of::<T>() * len;
-            if actual_size > (*self.raw).len_blocks() {
+            let actual_size: usize = mem::size_of::<Full>() + mem::size_of::<T>() * len as usize;
+            let blocks = ceil(actual_size, mem::size_of::<Block>());
+            if blocks > (*self.raw).len_blocks() as usize {
                 return Err(Error::InvalidSize);
             }
-            let blocks = ceil(actual_size, mem::size_of::<Block>());
-            let i = try!((*self.raw).alloc_index(blocks));
+            let i = try!((*self.raw).alloc_index(blocks as u16));
             Ok(SliceMutex{index: i, len: len, pool: self, _type: PhantomData})
         }
     }
@@ -61,7 +61,7 @@ impl Pool {
 // # Standard Mutex
 
 struct Mutex<'a, T> {
-    index: usize,
+    index: index,
     pool: &'a Pool,
     _type: PhantomData<T>,
 }
@@ -148,7 +148,7 @@ impl<'a, T: 'a> SliceMutexGuard<'a, T> {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
             let t: *const T = mem::transmute(pool.ptr(index.block()));
-            core::slice::from_raw_parts(t, self.__lock.len)
+            core::slice::from_raw_parts(t, self.__lock.len as usize)
         }
     }
 
@@ -157,7 +157,7 @@ impl<'a, T: 'a> SliceMutexGuard<'a, T> {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
             let t: *mut T = mem::transmute(pool.ptr(index.block()));
-            core::slice::from_raw_parts_mut(t, self.__lock.len)
+            core::slice::from_raw_parts_mut(t, self.__lock.len as usize)
         }
     }
 }
@@ -169,7 +169,7 @@ fn test_alloc() {
     let mut raw_pool = unsafe {
         let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
         let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
-        RawPool::new(iptr, indexes.len(), bptr, blocks.len())
+        RawPool::new(iptr, indexes.len() as index, bptr, blocks.len() as block)
     };
 
     let praw = &mut raw_pool as *mut RawPool;
@@ -207,7 +207,7 @@ fn test_alloc_slice() {
     let mut raw_pool = unsafe {
         let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
         let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
-        RawPool::new(iptr, indexes.len(), bptr, blocks.len())
+        RawPool::new(iptr, indexes.len() as index, bptr, blocks.len() as block)
     };
 
     let praw = &mut raw_pool as *mut RawPool;
