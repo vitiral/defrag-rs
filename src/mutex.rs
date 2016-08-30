@@ -4,7 +4,7 @@ use core::mem;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
-use super::types::{Result, index, block};
+use super::types::{Result, Error, index, block};
 use super::pool::{RawPool, Block, Index, Full};
 
 type TryLockResult<T> = core::result::Result<T, TryLockError>;
@@ -22,21 +22,43 @@ struct Pool {
     raw: *mut RawPool,
 }
 
+/// return the ceiling of a / b
+fn ceil(a: block, b: block) -> block {
+    a / b + (if a % b != 0 {1} else {0})
+}
+
 impl Pool {
     pub fn new(raw: *mut RawPool) -> Pool {
         Pool { raw: raw }
     }
 
     pub fn alloc<T>(&self) -> Result<Mutex<T>> {
-        let actual_size = mem::size_of::<T>() + mem::size_of::<Full>();
-        let blocks = actual_size / mem::size_of::<Block>() +
-            if actual_size % mem::size_of::<Block>() != 0 {1} else {0};
         unsafe {
+            let actual_size: usize = mem::size_of::<Full>() + mem::size_of::<T>();
+            if actual_size > (*self.raw).len_blocks() {
+                return Err(Error::InvalidSize);
+            }
+            let blocks = ceil(actual_size, mem::size_of::<Block>());
             let i = try!((*self.raw).alloc_index(blocks));
             Ok(Mutex{index: i, pool: self, _type: PhantomData})
         }
     }
+
+    pub fn alloc_slice<T>(&self, len: block) -> Result<SliceMutex<T>> {
+        unsafe {
+            let actual_size: usize = mem::size_of::<Full>() + mem::size_of::<T>() * len;
+            if actual_size > (*self.raw).len_blocks() {
+                return Err(Error::InvalidSize);
+            }
+            let blocks = ceil(actual_size, mem::size_of::<Block>());
+            let i = try!((*self.raw).alloc_index(blocks));
+            Ok(SliceMutex{index: i, len: len, pool: self, _type: PhantomData})
+        }
+    }
 }
+
+// ##################################################
+// # Standard Mutex
 
 struct Mutex<'a, T> {
     index: usize,
@@ -89,8 +111,59 @@ impl<'a, T: 'a> DerefMut for MutexGuard<'a, T> {
     }
 }
 
+// ##################################################
+// # Slice Mutex
+
+struct SliceMutex<'a, T> {
+    index: index,
+    pool: &'a Pool,
+    len: block,
+    _type: PhantomData<T>,
+}
+
+impl<'a, T> SliceMutex<'a, T> {
+    pub fn try_lock(&'a self) -> TryLockResult<SliceMutexGuard<T>> {
+        unsafe {
+            let pool = &*self.pool.raw;
+            let block = pool.index(self.index).block();
+            let full = pool.full_mut(block);
+            if full.is_locked() {
+                Err(TryLockError::WouldBlock)
+            } else {
+                full.set_lock();
+                assert!(full.is_locked());
+                Ok(SliceMutexGuard{__lock: self})
+            }
+        }
+    }
+}
+
+struct SliceMutexGuard<'a, T: 'a> {
+    __lock: &'a SliceMutex<'a, T>,
+}
+
+impl<'a, T: 'a> SliceMutexGuard<'a, T> {
+    fn deref(&mut self) -> &[T] {
+        unsafe {
+            let pool = &*self.__lock.pool.raw;
+            let index = &pool.index(self.__lock.index);
+            let t: *const T = mem::transmute(pool.ptr(index.block()));
+            core::slice::from_raw_parts(t, self.__lock.len)
+        }
+    }
+
+    fn deref_mut(&mut self) -> &mut [T] {
+        unsafe {
+            let pool = &*self.__lock.pool.raw;
+            let index = &pool.index(self.__lock.index);
+            let t: *mut T = mem::transmute(pool.ptr(index.block()));
+            core::slice::from_raw_parts_mut(t, self.__lock.len)
+        }
+    }
+}
+
 #[test]
-fn it_works() {
+fn test_alloc() {
     let mut indexes = [Index::default(); 256];
     let mut blocks = [Block::default(); 4096];
     let len_i = indexes.len();
@@ -126,4 +199,36 @@ fn it_works() {
     assert_eq!(unwrapped_locked2.deref(), &expected2);
 
     println!("{:?}, {:?}", indexes[0].block(), blocks[0].dumb());
+}
+
+fn test_alloc_slice() {
+    let mut indexes = [Index::default(); 256];
+    let mut blocks = [Block::default(); 4096];
+    let len_i = indexes.len();
+    let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
+    let len_b = blocks.len();
+    let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
+    let mut raw_pool = RawPool::new(iptr, len_i, bptr, len_b);
+
+    let praw = &mut raw_pool as *mut RawPool;
+    let mut pool = Pool::new(praw);
+
+    {
+        let alloced = pool.alloc_slice::<u16>(10000);
+        let unwrapped_alloc = alloced.unwrap();
+        let locked = unwrapped_alloc.try_lock();
+        let mut unwrapped_locked = locked.unwrap();
+        {
+            let rmut = unwrapped_locked.deref_mut();
+            for n in 0..10000 {
+                assert_eq!(rmut[n], 0);
+                rmut[n] = n as u16;
+            }
+        }
+
+        let r = unwrapped_locked.deref_mut();
+        for n in 0..10000 {
+            assert_eq!(r[n], n as u16);
+        }
+    }
 }

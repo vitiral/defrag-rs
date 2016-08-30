@@ -3,12 +3,14 @@
 
 use core;
 use core::mem;
+use core::default::Default;
 
 use super::types::*;
 
 // ##################################################
 // # Struct Definitions
-#[derive(Default, Copy, Clone)]
+#[repr(packed)]
+#[derive(Copy, Clone)]
 pub struct Block {
     _data: Free,
 }
@@ -19,6 +21,13 @@ impl Block {
     }
 }
 
+impl Default for Block {
+    fn default() -> Block {
+        Block {_data: Free {_blocks: 0, block: 0, _prev: 0, _next: 0}}
+    }
+}
+
+#[repr(packed)]
 #[derive(Debug, Copy, Clone)]
 pub struct Index {
     __block: block,
@@ -68,18 +77,19 @@ pub struct Full {
 // ##################################################
 // # Index impls
 
-impl core::default::Default for Index {
+impl Default for Index {
     fn default() -> Index {
         Index {__block: BLOCK_NULL}
     }
 }
 
 impl Index {
-    /// get size of Index DATA in bytes
+    /// get the block where the index is stored
     pub fn block(&self) -> block {
         self.__block
     }
 
+    /// get size of Index DATA in bytes
     pub fn size(&self, pool: &RawPool) -> usize {
         unsafe {
             pool.full(self.block()).blocks() - mem::size_of::<Full>()

@@ -12,9 +12,14 @@ pub const INDEX_BITMAP: index = !INDEX_HIGH_BIT;
 /// memory error codes
 #[derive(Debug, Copy, Clone)]
 pub enum Error {
+    /// The pool has enough memory but is too fragmented.
+    /// defragment and try again.
     Fragmented,
+    /// The pool has run out of memory
     OutOfMemory,
+    /// The pool has run out of indexes
     OutOfIndexes,
+    /// the amount of memory requested is too large
     InvalidSize,
 }
 
