@@ -2,7 +2,7 @@ use core::mem;
 use core::default::Default;
 
 use super::types::*;
-use super::pool::RawPool;
+use super::pool::{RawPool, Block, BlockType};
 
 // ##################################################
 // # Free
@@ -126,9 +126,16 @@ impl Free {
         }
     }
 
-    /// combine all contiguous freed block together.
-    fn combine(&mut self, pool: &mut RawPool) {
-
+    /// join two freed values together, assumes they are right next to eachother
+    /// returns the new freed value
+    unsafe fn join(&mut self, pool: &mut RawPool, right: &mut Free) -> &mut Free {
+        // remove them both from any bins -- their combined bin might change
+        // anyway
+        self.remove(pool);
+        right.remove(pool);
+        self._blocks += right.blocks();
+        (*(pool as *mut RawPool)).freed_bins.insert(pool, self);
+        self
     }
 }
 
@@ -170,10 +177,13 @@ impl FreedRoot {
     unsafe fn insert_root(&mut self, pool: &mut RawPool, freed: &mut Free) {
         if let Some(cur_root) = self.root_mut(&mut *(pool as *mut RawPool)) {
             cur_root.set_prev(pool, Some(freed));
+        } else {
+            freed._next = BLOCK_NULL;
         }
-        freed._prev = BLOCK_NULL;  // TODO: this is probably not necessary
+        freed._prev = BLOCK_NULL;
         self._root = freed.block();
     }
+
 }
 
 const NUM_BINS: u8 = 7;
@@ -288,6 +298,40 @@ impl FreedBins {
             };
             freed.remove(pool); // has to come before insert
             self.insert(pool, &mut *new_freed);
+        }
+    }
+
+    /// combine all contiguous freed blocks together.
+    pub fn clean(&mut self, pool: &mut RawPool) {
+        unsafe {
+            let poolptr = pool as *mut RawPool;
+            let mut block_maybe = (*poolptr).first_block();
+            let mut last_freed: Option<*mut Free> = None;
+            while let Some(block) = block_maybe {
+                last_freed = match (*block).ty() {
+                    BlockType::Free => match last_freed {
+                        Some(ref last) => {
+                            // combines the last with the current
+                            // and set last_freed to the new value
+                            Some((**last).join(pool, (*block).as_free_mut()))
+                        },
+                        None => {
+                            // last_freed is None, cannot combine
+                            // but this is the new "last block"
+                            Some((*block).as_free_mut() as *mut Free)
+                        }
+                    },
+                    BlockType::Full => {
+                        // found a full value, can't combine.
+                        // last becomes None
+                        None
+                    }
+                };
+                block_maybe = match (*block).next_mut(pool) {
+                    Some(b) => Some(b as *mut Block),
+                    None => None,
+                };
+            }
         }
     }
 }

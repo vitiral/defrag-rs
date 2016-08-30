@@ -46,10 +46,6 @@ impl Block {
         }
     }
 
-    // pub unsafe fn convert_mut(&mut self) -> &mut BlockType {
-        
-    // }
-
     pub unsafe fn as_free(&self) -> &Free {
         let ptr = self as *const Block;
         mem::transmute(ptr)
