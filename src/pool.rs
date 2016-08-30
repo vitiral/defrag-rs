@@ -636,6 +636,7 @@ fn test_indexes() {
     assert_eq!(pool.freed_bins.len, 0);
     pool.dealloc_index(i);
     {
+        println!("deallocated 1");
         assert_eq!(pool.index(i).__block, BLOCK_NULL);
 
         let freed = pool.freed(block);
