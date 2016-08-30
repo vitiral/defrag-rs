@@ -166,11 +166,11 @@ impl<'a, T: 'a> SliceMutexGuard<'a, T> {
 fn test_alloc() {
     let mut indexes = [Index::default(); 256];
     let mut blocks = [Block::default(); 4096];
-    let len_i = indexes.len();
-    let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
-    let len_b = blocks.len();
-    let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
-    let mut raw_pool = RawPool::new(iptr, len_i, bptr, len_b);
+    let mut raw_pool = unsafe {
+        let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
+        let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
+        RawPool::new(iptr, indexes.len(), bptr, blocks.len())
+    };
 
     let praw = &mut raw_pool as *mut RawPool;
     let mut pool = Pool::new(praw);
@@ -204,11 +204,11 @@ fn test_alloc() {
 fn test_alloc_slice() {
     let mut indexes = [Index::default(); 256];
     let mut blocks = [Block::default(); 4096];
-    let len_i = indexes.len();
-    let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
-    let len_b = blocks.len();
-    let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
-    let mut raw_pool = RawPool::new(iptr, len_i, bptr, len_b);
+    let mut raw_pool = unsafe {
+        let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
+        let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
+        RawPool::new(iptr, indexes.len(), bptr, blocks.len())
+    };
 
     let praw = &mut raw_pool as *mut RawPool;
     let mut pool = Pool::new(praw);
