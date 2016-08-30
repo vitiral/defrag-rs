@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
 use super::types::{Result, Error, index, block};
-use super::pool::{RawPool, Block, Index, Full};
+use super::pool::{RawPool, Index, Block, Full};
 
 type TryLockResult<T> = core::result::Result<T, TryLockError>;
 

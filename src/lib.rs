@@ -9,5 +9,6 @@ extern crate core;
 
 
 mod types;
+mod free;
 mod pool;
 mod mutex;
