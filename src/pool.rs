@@ -24,7 +24,7 @@ impl Block {
 
 impl Default for Block {
     fn default() -> Block {
-        Block {_data: Free {_blocks: 0, block: 0, _prev: 0, _next: 0}}
+        Block {_data: Free {_blocks: 0, _block: 0, _prev: 0, _next: 0}}
     }
 }
 
@@ -51,12 +51,12 @@ pub struct RawPool {
 /// the Free struct is a linked list of free values with
 /// the root as a size-bin in pool
 #[repr(packed)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Free {
     // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Full`
     // The first bit of `_blocks` is always 0 for Free structs
     _blocks: block,        // size of this freed memory
-    block: block,          // block location of this struct
+    _block: block,          // block location of this struct
     _prev: block,          // location of previous freed memory
     _next: block,          // location of next freed memory
     // data after this (until block + blocks) is invalid
@@ -105,7 +105,7 @@ impl Default for Free {
     fn default() -> Free {
         Free {
             _blocks: 0,
-            block: BLOCK_NULL,
+            _block: BLOCK_NULL,
             _prev: BLOCK_NULL,
             _next: BLOCK_NULL,
         }
@@ -113,6 +113,11 @@ impl Default for Free {
 }
 
 impl Free {
+    /// block accessor
+    fn block(&self) -> block {
+        self._block
+    }
+
     /// blocks accessor, handling any bitmaps
     fn blocks(&self) -> block {
         self._blocks
@@ -139,8 +144,8 @@ impl Free {
     unsafe fn set_next(&mut self, next: Option<&mut Free>) {
         match next {
             Some(n) => {
-                self._next = n.block;
-                n._prev = self.block;
+                self._next = n.block();
+                n._prev = self.block();
             }
             None => self._next = BLOCK_NULL,
         }
@@ -150,11 +155,11 @@ impl Free {
     unsafe fn set_prev(&mut self, pool: &mut RawPool, prev: Option<&mut Free>) {
         match prev {
             Some(p) => {
-                self._prev = p.block;
-                p._next = self.block;
+                self._prev = p.block();
+                p._next = self.block();
             }
             None => {
-                pool.set_freed_bin(Some(self));
+                pool.insert_freed_bin(self);
             }
         }
     }
@@ -164,6 +169,8 @@ impl Free {
         let pool = pool as *mut RawPool;
         unsafe {
             if let Some(n) = self.next() {
+                // set prev of the next freed block (if it exists)
+                println!("has next...?");
                 (*pool).freed_mut(n).set_prev(&mut (*pool), Some(next));
             }
             self.set_next(Some(next));
@@ -347,27 +354,52 @@ impl RawPool {
         return Err(Error::OutOfIndexes);
     }
 
-    fn freed_bin(&self) -> Option<block> {
+    fn freed_bin(&self) -> Option<&Free> {
         if self._freed == BLOCK_NULL {
             None
         } else {
-            Some(self._freed)
+            Some(self.freed(self._freed))
         }
     }
 
+    fn freed_bin_mut(&self) -> Option<&mut Free> {
+        if self._freed == BLOCK_NULL {
+            None
+        } else {
+            unsafe { Some(self.freed_mut(self._freed)) }
+        }
+    }
+
+    /// force sets the freed bin to the value and it's
+    /// prev to None
     fn set_freed_bin(&mut self, free: Option<&mut Free>) {
         match free {
             Some(f) => {
-                self._freed = f.block;
-                f._prev = BLOCK_NULL;  // it is the beginning of the list
-            }
+                self._freed = f.block();
+                f._prev = BLOCK_NULL;
+            },
             None => self._freed = BLOCK_NULL,
+        }
+    }
+
+    /// inserts a Free value into the freed bin
+    fn insert_freed_bin(&mut self, free: &mut Free) {
+        unsafe {
+            let next = self._freed;
+            self._freed = free.block();
+            let next = if next == BLOCK_NULL {
+                None
+            } else {
+                Some(self.freed_mut(next))
+            };
+            free.set_next(next);
+            free._prev = BLOCK_NULL;  // denotes pointing back to freed_bin
         }
     }
 
     fn get_freed_block(&mut self, blocks: block) -> Option<block> {
         let mut block = match self.freed_bin() {
-            Some(b) => b,
+            Some(b) => b.block(),
             None => return None,
         };
         loop {
@@ -375,23 +407,30 @@ impl RawPool {
                 let freed = self.freed_mut(block) as *mut Free;
                 // all unsafe operations are safe because we know that we are
                 // never changing more than one freed block at a time
-                if (*freed).blocks() == blocks {
+                let old_blocks = (*freed).blocks();
+                if old_blocks == blocks {
                     // perfectly equal, consumes freed block
+                    let old_block = (*freed).block();
                     (*freed).remove(self);
-                    return Some((*freed).block);
-                } else if (*freed).blocks() > blocks {
+                    return Some(old_block);
+                } else if old_blocks > blocks {
                     // use only the size that is needed, so append a new freed block
-                    let new_freed = self.freed_mut((*freed).block + blocks)
+                    let old_block = (*freed).block();
+                    let new_block = old_block + blocks;
+                    let new_freed = self.freed_mut(new_block)
                         as *mut Free;
                     (*new_freed) = Free {
-                        _blocks: (*freed).blocks() - blocks,
-                        block: (*freed).block + blocks,
+                        _blocks: old_blocks - blocks,
+                        _block: new_block,
                         _prev: BLOCK_NULL,
                         _next: BLOCK_NULL,
                     };
+                    println!("new freed: {:?}", *new_freed);
                     (*freed).append(self, &mut (*new_freed));
+                    println!("new freed: {:?}", *new_freed);
                     (*freed).remove(self);
-                    return Some((*freed).block);
+                    println!("new freed: {:?}", *new_freed);
+                    return Some(old_block);
                 }
                 block = match (*freed).next() {
                     Some(b) => b,
@@ -444,11 +483,12 @@ impl RawPool {
     pub unsafe fn dealloc_index(&mut self, i: index) {
         // get the size and location from the Index and clear it
         let block = self.index(i).block();
+        *self.index_mut(i) = Index::default();
+        // set up freed
         let freed = self.freed_mut(block) as *mut Free;
         (*freed)._blocks &= BLOCK_BITMAP;  // set first bit to 0
-        (*freed).block = block;
-        *self.index_mut(i) = Index::default();
-        self.set_freed_bin(Some(&mut *freed));
+        (*freed)._block = block;
+        self.insert_freed_bin(&mut *freed);
     }
 }
 
@@ -476,7 +516,7 @@ fn test_basic() {
     // assert that Free.blocks() DOESN'T cancel out the high bit (not necessary)
     let mut f = Free {
         _blocks: usize::max_value(),
-        block: 0,
+        _block: 0,
         _prev: 0,
         _next: 0,
     };
@@ -532,10 +572,10 @@ fn test_indexes() {
         assert_eq!(freed._blocks, 4);
         assert_eq!(freed.prev(), None);
         assert_eq!(freed.next(), None);
-        assert_eq!(pool.freed_bin().unwrap(), block);
+        assert_eq!(pool.freed_bin().unwrap().block(), block);
     }
 
-    // allocate another index
+    // allocate another index (that doesn't fit in the first)
     println!("allocate 2");
     let i2 = pool.alloc_index(8).unwrap();
     assert_eq!(i2, 4);
@@ -550,13 +590,12 @@ fn test_indexes() {
         }
     }
 
-    // allocate a 3rd index that fits in the first
+    // allocate a 3rd index (that does fit in the first)
     println!("allocate 3");
     let i3 = pool.alloc_index(2).unwrap();
     assert_eq!(i3, 5);
     let block3;
     {
-
         let index3 = unsafe {(*(&pool as *const RawPool)).index(i3)};
         assert_eq!(index3.__block, 0);
         block3 = index3.block();
@@ -566,7 +605,7 @@ fn test_indexes() {
         }
     }
     // tests related to the fact that i3 just overwrote the freed item
-    let free_block = pool.freed_bin().unwrap();
+    let free_block = pool.freed_bin().unwrap().block();
     assert_eq!(free_block, 2);
     {
         // free1 has moved
