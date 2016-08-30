@@ -4,8 +4,9 @@ what actually contains and maintains the indexes and memory.
 */
 
 use core::mem;
-use core::default::Default;
+use core::ptr;
 use core::slice;
+use core::default::Default;
 
 use super::types::*;
 use super::free::{FreedBins, Free};
@@ -114,7 +115,7 @@ impl Index {
 /// that references it.
 /// It also contains the lock information inside it's index.
 #[repr(C, packed)]
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Full {
     // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Free`
     // The first bit of blocks is 1 for Full structs
@@ -173,6 +174,8 @@ pub struct RawPool {
 }
 
 impl RawPool {
+    // Public unsafe API
+
     /// get a new RawPool
     ///
     /// This operation is unsafe because it is up to the user to ensure
@@ -213,112 +216,6 @@ impl RawPool {
             indexes_used: 0,
 
             freed_bins: FreedBins::default(),
-        }
-    }
-
-    // public safe API
-
-    /// raw pool size in blocks
-    pub fn len_blocks(&self) -> block {
-        self._blocks_len
-    }
-
-    pub fn len_indexes(&self) -> block {
-        self._indexes_len
-    }
-
-    /// raw pool size in bytes
-    pub fn size(&self) -> usize {
-        self.len_blocks() as usize * mem::size_of::<Block>()
-    }
-
-    /// raw blocks remaining (fragmented or not)
-    pub fn blocks_remaining(&self) -> block {
-        self.len_blocks() - self.blocks_used
-    }
-
-    /// raw bytes remaining (fragmented or not)
-    pub fn bytes_remaining(&self) -> usize {
-        self.blocks_remaining() as usize * mem::size_of::<Block>()
-    }
-
-    pub fn indexes_remaining(&self) -> index {
-        self.len_indexes() - self.indexes_used
-    }
-
-    /// get the index
-    pub unsafe fn index(&self, i: index) -> &Index {
-        let ptr = self._indexes.offset(i as isize);
-        mem::transmute(ptr)
-    }
-
-    // public unsafe API
-
-    pub unsafe fn index_mut(&self, i: index) -> &mut Index {
-        let ptr = self._indexes.offset(i as isize);
-        mem::transmute(ptr)
-    }
-
-    /// get the raw ptr to the data at block
-    pub unsafe fn ptr(&self, block: block) -> *const u8 {
-        let free = self.freed(block);
-        let mut ptr: *const u8 = mem::transmute(free);
-        ptr = ptr.offset(mem::size_of::<Full>() as isize);
-        ptr
-    }
-
-    /// get the pointer to the first block
-    pub unsafe fn first_block(&mut self) -> Option<*mut Block> {
-        if self.heap_block == 0 {
-            None
-        } else {
-            Some(self._blocks)
-        }
-    }
-
-    /// read the block as a Free block
-    pub unsafe fn freed(&self, block: block) -> &Free {
-        let ptr = self._blocks.offset(block as isize);
-        mem::transmute(ptr)
-    }
-
-    /// mut the block as a Free block
-    pub unsafe fn freed_mut(&self, block: block) -> &mut Free {
-        let ptr = self._blocks.offset(block as isize);
-        mem::transmute(ptr)
-    }
-
-    /// read the block as a Full block
-    pub unsafe fn full(&self, block: block) -> &Full {
-        let ptr = self._blocks.offset(block as isize);
-        mem::transmute(ptr)
-    }
-
-    /// mut the block as a Full block
-    pub unsafe fn full_mut(&self, block: block) -> &mut Full {
-        let ptr = self._blocks.offset(block as isize);
-        mem::transmute(ptr)
-    }
-
-    /// get an unused index
-    fn get_unused_index(&mut self) -> Result<index> {
-        // TODO: this is currently pretty slow, maybe cache freed indexes?
-        let mut i = (self.last_index_used + 1) % self.len_indexes();
-        while i != self.last_index_used {
-            if unsafe{self.index(i)._block} == BLOCK_NULL {
-                self.last_index_used = i;
-                return Ok(i);
-            }
-            i = (i + 1) % self.len_indexes();
-        }
-        return Err(Error::OutOfIndexes);
-    }
-
-    unsafe fn use_freed(&mut self, blocks: block) -> Option<block> {
-        let selfptr = self as *mut RawPool;
-        match (*selfptr).freed_bins.pop(self, blocks) {
-            Some(f) => Some(f),
-            None => None,
         }
     }
 
@@ -377,6 +274,192 @@ impl RawPool {
 
         let selfptr = self as *mut RawPool;
         (*selfptr).freed_bins.insert(self, &mut *freed);
+    }
+
+    pub unsafe fn defrag(&mut self) {
+        // this is very similar in logic to free.rs::FreeBin.clean
+        // not sure if that logic can be easily combined though...
+        let poolptr = self as *mut RawPool;
+        let mut block_maybe = (*poolptr).first_block();
+        let mut last_freed: Option<*mut Free> = None;
+        while let Some(block) = block_maybe {
+            last_freed = match (*block).ty() {
+                BlockType::Free => match last_freed {
+                    Some(ref last) => {
+                        // combines the last with the current
+                        // and set last_freed to the new value
+                        Some((**last).join(self, (*block).as_free_mut()))
+                    },
+                    None => {
+                        // last_freed is None, cannot combine
+                        // but this is the new "last block"
+                        Some((*block).as_free_mut() as *mut Free)
+                    }
+                },
+                BlockType::Full => match last_freed {
+                    Some(ref free) => match (*block).as_full().is_locked() {
+                        false => {
+                            // found an unlocked full value and the last value is free -- move it!
+                            // moving is surprisingly simple because:
+                            //  - the free.blocks does not change, so it does not change bins
+                            //  - the free.prev/next do not change
+                            //  - only the locations of full and free change, requiring their
+                            //      data, and the items pointing at them, to be updated
+                            let full = (*block).as_full();
+                            let i = (*full).index();
+                            let blocks = (*full).blocks();
+                            let mut free_tmp = (**free).clone();
+
+                            // perform the move of the data
+                            ptr::copy(mem::transmute(full), (*free) as *mut Block, blocks as usize);
+                            drop(free);
+
+                            // full's data was already copied (blocks + index), only need
+                            // to update the static Index's data
+                            (*poolptr).index_mut(i)._block = free_tmp.block();
+
+                            // update the free block's location and get it
+                            free_tmp._block += blocks;
+
+                            // update the items pointing TO free (this handles both)
+                            let p = match free_tmp.prev() {
+                                Some(p) => Some((*poolptr).freed_mut(p)),
+                                None => None,
+                            };
+                            free_tmp.set_prev(self, p);
+
+                            let n = match free_tmp.prev() {
+                                Some(n) => Some((*poolptr).freed_mut(n)),
+                                None => None,
+                            };
+                            free_tmp.set_next(n);
+
+                            // actually store the new free in pool._blocks
+                            let new_free_loc = (*poolptr).freed_mut(free_tmp._block);
+                            *new_free_loc = free_tmp;
+
+                            // the new_free is the last_freed for the next cycle
+                            Some(new_free_loc)
+                        }
+                        true => None, // locked full value, can't move
+                    },
+                    None => None,
+                }
+            };
+            block_maybe = match (*block).next_mut(self) {
+                Some(b) => Some(b as *mut Block),
+                None => None,
+            };
+        }
+    }
+
+    // public safe API
+
+    /// raw pool size in blocks
+    pub fn len_blocks(&self) -> block {
+        self._blocks_len
+    }
+
+    pub fn len_indexes(&self) -> block {
+        self._indexes_len
+    }
+
+    /// raw pool size in bytes
+    pub fn size(&self) -> usize {
+        self.len_blocks() as usize * mem::size_of::<Block>()
+    }
+
+    /// raw blocks remaining (fragmented or not)
+    pub fn blocks_remaining(&self) -> block {
+        self.len_blocks() - self.blocks_used
+    }
+
+    /// raw bytes remaining (fragmented or not)
+    pub fn bytes_remaining(&self) -> usize {
+        self.blocks_remaining() as usize * mem::size_of::<Block>()
+    }
+
+    pub fn indexes_remaining(&self) -> index {
+        self.len_indexes() - self.indexes_used
+    }
+
+    /// get the index
+    pub unsafe fn index(&self, i: index) -> &Index {
+        let ptr = self._indexes.offset(i as isize);
+        mem::transmute(ptr)
+    }
+
+    // semi-private unsafe API
+
+    pub unsafe fn index_mut(&self, i: index) -> &mut Index {
+        let ptr = self._indexes.offset(i as isize);
+        mem::transmute(ptr)
+    }
+
+    /// get the raw ptr to the data at block
+    pub unsafe fn ptr(&self, block: block) -> *const u8 {
+        let free = self.freed(block);
+        let mut ptr: *const u8 = mem::transmute(free);
+        ptr = ptr.offset(mem::size_of::<Full>() as isize);
+        ptr
+    }
+
+    /// get the pointer to the first block
+    pub unsafe fn first_block(&mut self) -> Option<*mut Block> {
+        if self.heap_block == 0 {
+            None
+        } else {
+            Some(self._blocks)
+        }
+    }
+
+    /// read the block as a Free block
+    pub unsafe fn freed(&self, block: block) -> &Free {
+        let ptr = self._blocks.offset(block as isize);
+        mem::transmute(ptr)
+    }
+
+    /// mut the block as a Free block
+    pub unsafe fn freed_mut(&self, block: block) -> &mut Free {
+        let ptr = self._blocks.offset(block as isize);
+        mem::transmute(ptr)
+    }
+
+    /// read the block as a Full block
+    pub unsafe fn full(&self, block: block) -> &Full {
+        let ptr = self._blocks.offset(block as isize);
+        mem::transmute(ptr)
+    }
+
+    /// mut the block as a Full block
+    pub unsafe fn full_mut(&self, block: block) -> &mut Full {
+        let ptr = self._blocks.offset(block as isize);
+        mem::transmute(ptr)
+    }
+
+    // private API
+
+    /// get an unused index
+    fn get_unused_index(&mut self) -> Result<index> {
+        // TODO: this is currently pretty slow, maybe cache freed indexes?
+        let mut i = (self.last_index_used + 1) % self.len_indexes();
+        while i != self.last_index_used {
+            if unsafe{self.index(i)._block} == BLOCK_NULL {
+                self.last_index_used = i;
+                return Ok(i);
+            }
+            i = (i + 1) % self.len_indexes();
+        }
+        return Err(Error::OutOfIndexes);
+    }
+
+    /// get a freed value from the freed bins
+    unsafe fn use_freed(&mut self, blocks: block) -> Option<block> {
+        let selfptr = self as *mut RawPool;
+        match (*selfptr).freed_bins.pop(self, blocks) {
+            Some(f) => Some(f),
+            None => None,
+        }
     }
 }
 
