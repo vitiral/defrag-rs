@@ -4,6 +4,7 @@
 use core;
 use core::mem;
 use core::default::Default;
+use core::slice;
 
 use super::types::*;
 
@@ -223,9 +224,25 @@ impl Full {
 // # RawPool impls
 
 impl RawPool {
-    pub fn new(indexes:*mut Index, indexes_len: index,
+    pub fn new(indexes: *mut Index, indexes_len: index,
                blocks: *mut Block, blocks_len: block)
                -> RawPool {
+        unsafe {
+            // initialize all indexes to INDEX_NULL
+            let mut ptr = indexes;
+            for _ in 0..indexes_len {
+                *ptr = Index::default();
+                ptr = ptr.offset(1);
+            }
+
+            // initialize all blocks to 0
+            let mut ptr = blocks;
+            for _ in 0..blocks_len {
+                *ptr = Block::default();
+                ptr = ptr.offset(1);
+            }
+        }
+
         RawPool {
             last_index_used: indexes_len - 1,
             _freed: BLOCK_NULL,
