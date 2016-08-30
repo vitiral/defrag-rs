@@ -12,7 +12,7 @@ use core::slice;
 use super::types::*;
 
 // ##################################################
-// # Struct Definitions
+// # Block
 
 // a single block, currently == 2 Free blocks which
 // is 128 bits
@@ -29,76 +29,16 @@ impl Default for Block {
     }
 }
 
+// ##################################################
+// # Index
+
+/// Index provides a non-moving location in memory for userspace
+/// to reference. There is a limited number of indexes.
 #[repr(packed)]
 #[derive(Debug, Copy, Clone)]
 pub struct Index {
     __block: block,
 }
-
-/// a FreedRoot stores the beginning of the linked list
-/// and keeps track of statistics
-#[repr(packed)]
-struct FreedRoot {
-    len: block,
-    freed: block,
-}
-
-/// the FreedBins provide simple and fast access to freed data
-struct FreedBins {
-    len: block,  // surprisingly it is possible to have more freed than indexes
-    bins: [FreedRoot; 7],
-}
-
-/// The RawPool is the private container and manager for all allocated
-/// and freed data
-// TODO: indexes and blocks need to be dynamically sized
-pub struct RawPool {
-    // blocks and statistics
-    _blocks: *mut Block,     // actual data
-    _blocks_len: block,      // len of blocks
-    heap_block: block,       // the current location of the "heap"
-    blocks_used: block,       // total memory currently used
-
-    // indexes and statistics
-    _indexes: *mut Index,    // does not move and stores movable block location of data
-    _indexes_len: index,     // len of indexes
-    last_index_used: index,  // for speeding up finding indexes
-    indexes_used: index,     // total number of indexes used
-
-    /// freed bins
-    _freed: block,           // freed bins
-
-}
-
-/// the Free struct is a linked list of free values with
-/// the root as a size-bin in pool
-#[repr(packed)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct Free {
-    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Full`
-    // The first bit of `_blocks` is always 0 for Free structs
-    _blocks: block,        // size of this freed memory
-    _block: block,          // block location of this struct
-    _prev: block,          // location of previous freed memory
-    _next: block,          // location of next freed memory
-    // data after this (until block + blocks) is invalid
-}
-
-/// the Full struct only contains enough information about the data to
-/// allocate it
-#[repr(packed)]
-#[derive(Debug)]
-pub struct Full {
-    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Free`
-    // The first bit of blocks is 1 for Full structs
-    _blocks: block,        // size of this freed memory
-    _index: index,         // data which contains the index and the lock information
-    // space after this (until block + blocks) is invalid
-}
-
-
-// ##################################################
-// # Index impls
 
 impl Default for Index {
     fn default() -> Index {
@@ -122,7 +62,21 @@ impl Index {
 }
 
 // ##################################################
-// # Free impls
+// # Free
+
+/// the Free struct is a linked list of free values with
+/// the root as a size-bin in pool
+#[repr(packed)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct Free {
+    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Full`
+    // The first bit of `_blocks` is always 0 for Free structs
+    _blocks: block,        // size of this freed memory
+    _block: block,          // block location of this struct
+    _prev: block,          // location of previous freed memory
+    _next: block,          // location of next freed memory
+    // data after this (until block + blocks) is invalid
+}
 
 impl Default for Free {
     fn default() -> Free {
@@ -218,7 +172,21 @@ impl Free {
 }
 
 // ##################################################
-// # Full impls
+// # Full
+
+/// the Full struct represents data that has been allocated
+/// it contains only the size and a back-reference to the index
+/// that references it.
+/// It also contains the lock information inside it's index.
+#[repr(packed)]
+#[derive(Debug)]
+pub struct Full {
+    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Free`
+    // The first bit of blocks is 1 for Full structs
+    _blocks: block,        // size of this freed memory
+    _index: index,         // data which contains the index and the lock information
+    // space after this (until block + blocks) is invalid
+}
 
 impl Full {
     /// get whether Full is locked
@@ -245,10 +213,51 @@ impl Full {
     }
 }
 
+
+/// a FreedRoot stores the beginning of the linked list
+/// and keeps track of statistics
+#[repr(packed)]
+struct FreedRoot {
+    len: block,
+    freed: block,
+}
+
+/// the FreedBins provide simple and fast access to freed data
+struct FreedBins {
+    len: block,  // surprisingly it is possible to have more freed than indexes
+    bins: [FreedRoot; 7],
+}
+
 // ##################################################
-// # RawPool impls
+// # RawPool
+
+/// The RawPool is the private container and manager for all allocated
+/// and freed data. It handles the internals of allocation, deallocation
+/// and defragmentation.
+pub struct RawPool {
+    // blocks and statistics
+    _blocks: *mut Block,     // actual data
+    _blocks_len: block,      // len of blocks
+    heap_block: block,       // the current location of the "heap"
+    blocks_used: block,       // total memory currently used
+
+    // indexes and statistics
+    _indexes: *mut Index,    // does not move and stores movable block location of data
+    _indexes_len: index,     // len of indexes
+    last_index_used: index,  // for speeding up finding indexes
+    indexes_used: index,     // total number of indexes used
+
+    /// freed bins
+    _freed: block,           // freed bins
+
+}
 
 impl RawPool {
+    /// get a new RawPool
+    ///
+    /// This operation is unsafe because it is up to the user to ensure
+    /// that `indexes` and `blocks` do not get deallocated for the lifetime
+    /// of RawPool
     pub unsafe fn new(indexes: *mut Index, indexes_len: index,
                blocks: *mut Block, blocks_len: block)
                -> RawPool {
@@ -514,7 +523,8 @@ impl RawPool {
     }
 }
 
-// Tests
+// ##################################################
+// # Internal Tests
 
 #[test]
 fn test_basic() {
