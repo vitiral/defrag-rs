@@ -213,19 +213,117 @@ impl Full {
     }
 }
 
+// ##################################################
+// # Freed Bins and Root
 
 /// a FreedRoot stores the beginning of the linked list
 /// and keeps track of statistics
 #[repr(packed)]
 struct FreedRoot {
-    len: block,
-    freed: block,
+    _root: block,
 }
+
+impl Default for FreedRoot {
+    fn default() -> FreedRoot {
+        FreedRoot {_root: BLOCK_NULL}
+    }
+}
+
+impl FreedRoot {
+    unsafe fn root_mut<'a>(&mut self, pool: &'a mut RawPool) -> Option<&'a mut Free> {
+        if self._root == BLOCK_NULL {
+            None
+        } else {
+            Some(pool.freed_mut(self._root))
+        }
+    }
+
+    unsafe fn set_root(&mut self, pool: &mut RawPool, freed: &mut Free) {
+        if let Some(cur_root) = self.root_mut(&mut *(pool as *mut RawPool)) {
+            cur_root.set_prev(pool, Some(freed));
+        }
+        freed.set_prev(pool, None); // TODO: this is probably not necessary
+        self._root = freed.block();
+    }
+}
+
+const NUM_BINS: u8 = 8;
 
 /// the FreedBins provide simple and fast access to freed data
 struct FreedBins {
-    len: block,  // surprisingly it is possible to have more freed than indexes
-    bins: [FreedRoot; 7],
+    len: block,
+    bins: [FreedRoot; NUM_BINS as usize],
+}
+
+impl FreedBins {
+    /// insert a Free block into a freed bin
+    unsafe fn insert(&mut self, pool: &mut RawPool, freed: &mut Free) {
+        self.len += 1;
+        let b: u8 = match freed.blocks() {
+            1   ...3     => 0,
+            4   ...15    => 1,
+            16  ...63    => 2,
+            63  ...255   => 3,
+            256 ...1023  => 4,
+            1024...4095  => 5,
+            _            => 6,
+        };
+        self.bins[b as usize].set_root(pool, freed);
+    }
+
+    /// get a block of the requested size from the freed bins,
+    /// removing it from the freed bins
+    unsafe fn pop(&mut self, pool: &mut RawPool, blocks: block) -> Option<&mut Free>{
+        assert!(blocks != 0);
+        if self.len == 0 {
+            return None;
+        }
+        // get the starting bin
+        // the starting bin is where we KNOW we can find the required amount of
+        // data and is the fastest way to retrive data from a bin.
+        let bin: u8 = match blocks {
+            1            => 0,
+            2   ...4     => 1,
+            5   ...16    => 2,
+            17  ...64    => 3,
+            65  ...256   => 4,
+            257 ...1024  => 5,
+            _            => 6,
+        };
+        let poolptr = pool as *mut RawPool;
+        for b in bin..NUM_BINS {
+            if let Some(freed) = self.bins[b as usize].root_mut(&mut *(pool as *mut RawPool)) {
+                // we have found freed data that is >= the size we need
+                // all unsafe operations are safe because we know that we are
+                // never changing more than one freed block at a time
+                self.len += 1;
+                let old_blocks = freed.blocks();
+                if old_blocks == blocks {
+                    // perfectly equal, consumes freed block
+                    let old_block = freed.block();
+                    freed.remove(pool);
+                    return Some(freed);
+                } else {
+                    // use only the size that is needed, so append a new freed block
+                    let old_block = freed.block();
+                    let new_block = old_block + blocks;
+                    let new_freed = pool.freed_mut(new_block)
+                        as *mut Free;
+                    (*new_freed) = Free {
+                        _blocks: old_blocks - blocks,
+                        _block: new_block,
+                        _prev: BLOCK_NULL,
+                        _next: BLOCK_NULL,
+                    };
+                    // TODO: we don't append it, we need to insert it into a bin
+                    // (*freed).append(self, &mut (*new_freed));
+                    freed.remove(pool);
+                    return Some(freed);
+                }
+            }
+        }
+        None
+    }
 }
 
 // ##################################################

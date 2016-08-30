@@ -135,7 +135,7 @@ There are several `Pool` data structures that are used to store freed
 values
 
 To do this, the start of the freed-linked lists are kept in sized bins.
-There are X bins of size N Block:
+There are 8 bins of size N Block:
  - >= 2^0  = 1 blocks (must be >= `sizeof(Free)`)
  - >= 2^2  = 4 blocks
  - >= 2^4  = 16 blocks
@@ -143,6 +143,7 @@ There are X bins of size N Block:
  - >= 2^8  = 256 blocks
  - >= 2^10 = 1024 blocks
  - >= 2^12 = 4096 blocks
+ - larger than 4096
 
 when an allocation is selected, it knows it can get the value from the 
 bin which is >= it's size in blocks.
