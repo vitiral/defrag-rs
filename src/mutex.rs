@@ -197,8 +197,6 @@ fn test_alloc() {
         *rmut = expected2;
     }
     assert_eq!(unwrapped_locked2.deref(), &expected2);
-
-    println!("{:?}, {:?}", indexes[0].block(), blocks[0].dumb());
 }
 
 fn test_alloc_slice() {

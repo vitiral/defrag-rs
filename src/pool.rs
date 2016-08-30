@@ -24,12 +24,6 @@ pub struct Block {
     _a: Free,
 }
 
-impl Block {
-    pub fn dumb(&self) -> &'static str {
-        "what"
-    }
-}
-
 impl Default for Block {
     fn default() -> Block {
         unsafe { mem::zeroed() }
