@@ -1,7 +1,6 @@
 /*! pool.rs
 Contains all the logic related to the RawPool. The RawPool is
 what actually contains and maintains the indexes and memory.
-
 */
 
 
@@ -36,18 +35,39 @@ pub struct Index {
     __block: block,
 }
 
+/// a FreedRoot stores the beginning of the linked list
+/// and keeps track of statistics
+#[repr(packed)]
+struct FreedRoot {
+    len: block,
+    freed: block,
+}
+
+/// the FreedBins provide simple and fast access to freed data
+struct FreedBins {
+    len: block,  // surprisingly it is possible to have more freed than indexes
+    bins: [FreedRoot; 7],
+}
+
 /// The RawPool is the private container and manager for all allocated
 /// and freed data
 // TODO: indexes and blocks need to be dynamically sized
 pub struct RawPool {
-    last_index_used: index,  // for speeding up finding indexes
-    _freed: block,           // free values
-    heap_block: block,       // the current location of the "heap"
-    total_used: block,       // total memory currently used
-    _indexes: *mut Index,    // does not move and stores movable block location of data
-    _indexes_len: index,     // len of indexes
+    // blocks and statistics
     _blocks: *mut Block,     // actual data
     _blocks_len: block,      // len of blocks
+    heap_block: block,       // the current location of the "heap"
+    blocks_used: block,       // total memory currently used
+
+    // indexes and statistics
+    _indexes: *mut Index,    // does not move and stores movable block location of data
+    _indexes_len: index,     // len of indexes
+    last_index_used: index,  // for speeding up finding indexes
+    indexes_used: index,     // total number of indexes used
+
+    /// freed bins
+    _freed: block,           // freed bins
+
 }
 
 /// the Free struct is a linked list of free values with
@@ -253,15 +273,17 @@ impl RawPool {
         }
 
         RawPool {
-            last_index_used: indexes_len - 1,
-            _freed: BLOCK_NULL,
-            heap_block: 0,
-            total_used: 0,
-            _indexes: indexes,
-            _indexes_len: indexes_len,
             _blocks: blocks,
             _blocks_len: blocks_len,
+            heap_block: 0,
+            blocks_used: 0,
 
+            _indexes: indexes,
+            _indexes_len: indexes_len,
+            last_index_used: indexes_len - 1,
+            indexes_used: 0,
+
+            _freed: BLOCK_NULL,
         }
     }
 
@@ -283,12 +305,16 @@ impl RawPool {
 
     /// raw blocks remaining (fragmented or not)
     pub fn blocks_remaining(&self) -> block {
-        self.len_blocks() - self.total_used
+        self.len_blocks() - self.blocks_used
     }
 
     /// raw bytes remaining (fragmented or not)
     pub fn bytes_remaining(&self) -> usize {
         self.blocks_remaining() as usize * mem::size_of::<Block>()
+    }
+
+    pub fn indexes_remaining(&self) -> index {
+        self.len_indexes() - self.indexes_used
     }
 
     /// get the index
@@ -458,6 +484,7 @@ impl RawPool {
             self.last_index_used = prev_used_index;
             return Err(Error::Fragmented)
         };
+        self.indexes_used += 1;
         // set the index data
         unsafe {
             let index = self.index_mut(i);
@@ -474,6 +501,8 @@ impl RawPool {
 
     /// dealoc an index from the pool, this WILL corrupt any data that was there
     pub unsafe fn dealloc_index(&mut self, i: index) {
+        self.indexes_used -= 1;
+
         // get the size and location from the Index and clear it
         let block = self.index(i).block();
         *self.index_mut(i) = Index::default();

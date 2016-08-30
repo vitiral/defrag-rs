@@ -4,14 +4,15 @@
 features. It is recommended NOT to use it at this time. Developers and comments
 are always welcome.**
 
-**defrag** is a minature memory manager that aims to eliminate the primary reason
+**defrag** is a memory manager that aims to eliminate the primary reason
 NOT to use dynamic memory on microcontrollers -- that your memory might become
 fragmented. **defrag** provides an ergonomic api for memory use modeled
-after the standard mutex.
+after the standard mutex to allow for memory defragmentation behind the
+scenes.
 
 The primary manager of memory is the `Pool`, from which the user can call
 `Pool.alloc::<T>()` or `Pool.alloc_slice::<T>(len)`. From this they will get
-a `Mutex<T>` object which behaves very similarily to rust's stdlib
+a `Mutex<T>` like object which behaves very similarily to rust's stdlib
 `Mutex` except it has only a single method, 
 [`try_lock`](https://doc.rust-lang.org/std/sync/struct.Mutex.html#method.try_lock).
 When the the user wishes to use the memory, they simply call `try_lock` to obtain
