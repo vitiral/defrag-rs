@@ -12,7 +12,7 @@ use super::pool::RawPool;
 #[repr(packed)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Free {
-    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Full`
+    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `Full._blocks`
     // The first bit of `_blocks` is always 0 for Free structs
     pub _blocks: block,        // size of this freed memory
     pub _block: block,          // block location of this struct
@@ -33,8 +33,9 @@ impl Default for Free {
 }
 
 /// Free is a private struct to defrag, so all accessor
-/// methods are public (for tests)
 impl Free {
+    // public accessors (public for tests)
+
     /// block accessor
     pub fn block(&self) -> block {
         self._block
@@ -63,6 +64,9 @@ impl Free {
         }
     }
 
+    // private methods for manipulating the Free linked-list
+
+    /// set the next freed block and set it's prev to self
     unsafe fn set_next(&mut self, next: Option<&mut Free>) {
         match next {
             Some(n) => {
@@ -141,6 +145,7 @@ impl Default for FreedRoot {
 }
 
 impl FreedRoot {
+    /// public for tests to access
     pub unsafe fn root<'a>(&self, pool: &'a RawPool) -> Option<&'a Free> {
         if self._root == BLOCK_NULL {
             None
@@ -192,6 +197,7 @@ impl FreedBins {
     }
 
     /// insert a Free block into a freed bin
+    /// this is the only method that Pool uses to store deallocated indexes
     pub unsafe fn insert(&mut self, pool: &mut RawPool, freed: &mut Free) {
         self.len += 1;
         let bin = self.get_insert_bin(freed.blocks());
@@ -201,6 +207,7 @@ impl FreedBins {
     /// get a block of the requested size from the freed bins, removing it from the freed
     /// bins. It should be assumed that none of the data at the `block` output location
     /// is valid after this operation is performed.
+    /// This is the only method that RawPool uses to re-use freed blocks
     pub unsafe fn pop(&mut self, pool: &mut RawPool, blocks: block) -> Option<block>{
         assert!(blocks != 0);
         if self.len == 0 {

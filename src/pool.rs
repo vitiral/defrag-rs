@@ -18,8 +18,8 @@ use super::free::{FreedBins, Free};
 #[repr(packed)]
 #[derive(Copy, Clone)]
 pub struct Block {
-    _data: Free,
     _a: Free,
+    _b: Free,
 }
 
 impl Default for Block {
