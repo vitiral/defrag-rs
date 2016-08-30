@@ -37,19 +37,19 @@ impl Default for Block {
 #[repr(packed)]
 #[derive(Debug, Copy, Clone)]
 pub struct Index {
-    __block: block,
+    _block: block,
 }
 
 impl Default for Index {
     fn default() -> Index {
-        Index {__block: BLOCK_NULL}
+        Index {_block: BLOCK_NULL}
     }
 }
 
 impl Index {
     /// get the block where the index is stored
     pub fn block(&self) -> block {
-        self.__block
+        self._block
     }
 
     /// get size of Index DATA in bytes
@@ -293,9 +293,14 @@ impl FreedBins {
         self.bins[bin as usize].insert_root(pool, freed);
     }
 
-    /// consume partof the freed value
-    /// this splits the freed value (or just removes if it the exact requested size)
-    /// and removes it from being tracked by the bin
+    /// Consume partof the freed value, reducing it's actual size to the size of `blocks`.
+    /// This splits the freed value (or just removes if it is the exact requested size)
+    /// and removes it from being tracked by the Bins. It then tracks whatever
+    /// was left of it.
+    ///
+    /// After perforing this operation, the information stored in `freed` is completely invalid.
+    /// This includes it's blocks-size, block-location as well as `prev` and `next` fields. It
+    /// is the responsibility of the user to set the information to be valid.
     unsafe fn consume_partof(&mut self, pool: &mut RawPool, freed: &mut Free, blocks: block) {
         // all unsafe operations are safe because we know that we are
         // never changing more than one freed block at a time
@@ -321,16 +326,17 @@ impl FreedBins {
         }
     }
 
-    /// get a block of the requested size from the freed bins,
-    /// removing it from the freed bins
-    unsafe fn pop(&mut self, pool: &mut RawPool, blocks: block) -> Option<&mut Free>{
+    /// get a block of the requested size from the freed bins, removing it from the freed
+    /// bins. It should be assumed that none of the data at the `block` output location
+    /// is valid after this operation is performed.
+    unsafe fn pop(&mut self, pool: &mut RawPool, blocks: block) -> Option<block>{
         assert!(blocks != 0);
         if self.len == 0 {
             return None;
         }
         // get the starting bin
         // the starting bin is where we KNOW we can find the required amount of
-        // data and is the fastest way to retrive data from a bin.
+        // data (if it has any) and is the fastest way to retrive data from a bin.
         let bin: u8 = match blocks {
             1            => 0,
             2   ...4     => 1,
@@ -346,16 +352,18 @@ impl FreedBins {
             if let Some(out) = self.bins[b as usize].root_mut(&mut *poolptr) {
                 // we have found freed data that is >= the size we need
                 self.consume_partof(pool, out, blocks);
-                return Some(out);
+                return Some(out.block());
             }
         }
+
         // failed to get in any of the smaller bins (or the data is too large)
         // have to search item by item in the final (largest) bin.
         if let Some(mut out) = self.bins[(NUM_BINS - 1) as usize].root_mut(&mut *poolptr) {
             loop {
                 if out.blocks() >= blocks {
+                    // we have found freed data that is >= the size we need
                     self.consume_partof(pool, out, blocks);
-                    return Some(out);
+                    return Some(out.block());
                 }
                 let out = match out.next() {
                     Some(o) => o,
@@ -515,7 +523,7 @@ impl RawPool {
         // TODO: this is currently pretty slow, maybe cache freed indexes?
         let mut i = (self.last_index_used + 1) % self.len_indexes();
         while i != self.last_index_used {
-            if unsafe{self.index(i).__block} == BLOCK_NULL {
+            if unsafe{self.index(i)._block} == BLOCK_NULL {
                 self.last_index_used = i;
                 return Ok(i);
             }
@@ -527,7 +535,7 @@ impl RawPool {
     unsafe fn use_freed(&mut self, blocks: block) -> Option<block> {
         let selfptr = self as *mut RawPool;
         match (*selfptr).freed_bins.pop(self, blocks) {
-            Some(f) => Some(f.block()),
+            Some(f) => Some(f),
             None => None,
         }
     }
@@ -561,7 +569,7 @@ impl RawPool {
         // set the index data
         unsafe {
             let index = self.index_mut(i);
-            index.__block = block
+            index._block = block
         }
         // set the full data in the block
         unsafe {
@@ -648,7 +656,7 @@ fn test_indexes() {
     let block;
     {
         let index = (*(&pool as *const RawPool)).index(i);
-        assert_eq!(index.__block, 0);
+        assert_eq!(index._block, 0);
         block = index.block();
         assert_eq!(pool.full(index.block()).blocks(), 4);
         assert_eq!(pool.full(index.block())._blocks, BLOCK_HIGH_BIT | 4);
@@ -660,7 +668,7 @@ fn test_indexes() {
     pool.dealloc_index(i);
     {
         println!("deallocated 1");
-        assert_eq!(pool.index(i).__block, BLOCK_NULL);
+        assert_eq!(pool.index(i)._block, BLOCK_NULL);
 
         let freed = pool.freed(block);
         assert_eq!(freed.blocks(), 4);
@@ -678,7 +686,7 @@ fn test_indexes() {
     let block2;
     {
         let index2 = (*(&pool as *const RawPool)).index(i2);
-        assert_eq!(index2.__block, 4);
+        assert_eq!(index2._block, 4);
         block2 = index2.block();
         assert_eq!(pool.full(index2.block()).blocks(), 8);
         assert_eq!(pool.full(index2.block())._blocks, BLOCK_HIGH_BIT | 8);
@@ -691,7 +699,7 @@ fn test_indexes() {
     let block3;
     {
         let index3 = (*(&pool as *const RawPool)).index(i3);
-        assert_eq!(index3.__block, 0);
+        assert_eq!(index3._block, 0);
         block3 = index3.block();
         assert_eq!(pool.full(index3.block()).blocks(), 2);
         assert_eq!(pool.full(index3.block())._blocks, BLOCK_HIGH_BIT | 2);
