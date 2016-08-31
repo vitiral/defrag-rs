@@ -169,7 +169,7 @@ impl Free {
 /// and keeps track of statistics
 #[repr(C, packed)]
 pub struct FreedRoot {
-    _root: block,
+    pub _root: block,
 }
 
 impl Default for FreedRoot {
@@ -324,42 +324,4 @@ impl FreedBins {
             self.insert(pool, &mut *new_freed);
         }
     }
-
-    // /// combine all contiguous freed blocks together.
-    // pub unsafe fn clean(&mut self, pool: &mut RawPool) {
-    //     let poolptr = pool as *mut RawPool;
-    //     let mut block_maybe = (*poolptr).first_block();
-    //     let mut last_freed: Option<*mut Free> = None;
-    //     while let Some(block) = block_maybe {
-    //         last_freed = match (*block).ty() {
-    //             BlockType::Free => {
-    //                 let free = (*block).as_free_mut();
-    //                 // println!("{:?}", free);
-    //                 match last_freed {
-    //                     Some(ref last) => {
-    //                         // combines the last with the current
-    //                         // and set last_freed to the new value
-    //                         Some((**last).join(pool, free))
-    //                     },
-    //                     None => {
-    //                         // last_freed is None, cannot combine
-    //                         // but this is the new "last block"
-    //                         Some(free as *mut Free)
-    //                     }
-    //                 }
-    //             },
-    //             BlockType::Full => {
-    //                 let full = (*block).as_full_mut();
-    //                 // println!("{:?}", full);
-    //                 // found a full value, can't combine.
-    //                 // last becomes None
-    //                 None
-    //             }
-    //         };
-    //         block_maybe = match (*block).next_mut(pool) {
-    //             Some(b) => Some(b as *mut Block),
-    //             None => None,
-    //         };
-    //     }
-    // }
 }
