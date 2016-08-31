@@ -12,3 +12,4 @@ mod types;
 mod free;
 mod pool;
 mod mutex;
+mod utils;
