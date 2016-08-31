@@ -10,7 +10,7 @@ use core::default::Default;
 use core::fmt;
 
 use super::types::*;
-use super::free::{FreedBins, Free};
+use super::free::{FreedBins, Free, NUM_BINS};
 use super::utils;
 
 // ##################################################
@@ -39,6 +39,17 @@ impl fmt::Debug for Block {
     }
 }
 
+impl fmt::Display for Block {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        unsafe {
+            match self.ty() {
+                BlockType::Free => write!(f, "{:?}", self.as_free()),
+                BlockType::Full => write!(f, "{:?}", self.as_full()),
+            }
+        }
+    }
+}
+
 impl Block {
     pub fn blocks(&self) -> block {
         let out = self._a._blocks & BLOCK_BITMAP;
@@ -53,7 +64,7 @@ impl Block {
         }
     }
 
-    pub unsafe fn next_mut(&mut self, pool: &mut RawPool) -> Option<&mut Block> {
+    pub unsafe fn next_mut(&mut self, pool: &RawPool) -> Option<&mut Block> {
         let block = self.block(pool);
         let blocks = self.blocks();
         if block + blocks == pool.heap_block {
@@ -157,10 +168,13 @@ pub struct Full {
 
 impl fmt::Debug for Full {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Full {{blocks: {}, index: {}, L: {}}}",
+        let isvalid = if self.is_valid() {" "} else {"!"};
+        write!(f, "Full{}{{blocks: {}, index: {}, L: {}}}{}",
+               isvalid,
                self._blocks & BLOCK_BITMAP,
                self._index & BLOCK_BITMAP,
                self._index & INDEX_HIGH_BIT == INDEX_HIGH_BIT,
+               isvalid
         )
     }
 }
@@ -194,9 +208,12 @@ impl Full {
         self._index & INDEX_BITMAP
     }
 
+    fn is_valid(&self) -> bool {
+        self._blocks & BLOCK_HIGH_BIT == BLOCK_HIGH_BIT && self._blocks & BLOCK_BITMAP != 0
+    }
+
     fn assert_valid(&self) {
-        assert!(self._blocks & BLOCK_HIGH_BIT == BLOCK_HIGH_BIT, "{:?}", self);
-        assert!(self._blocks & BLOCK_BITMAP != 0, "{:?}", self);
+        assert!(self.is_valid(), "{:?}", self);
     }
 }
 
@@ -224,7 +241,49 @@ pub struct RawPool {
 
 }
 
+pub struct DisplayRawPool<'a> {
+    pool: &'a RawPool,
+}
+
+impl<'a> fmt::Display for DisplayRawPool<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let p = self.pool;
+        write!(f, "# RawPool\n");
+        write!(f, "  * Indexes:  len: {:<5},     used: {:<5} remaining:{:<5}\n",
+               p.len_indexes(), p.indexes_used, p.indexes_remaining());
+        let mut out;
+        out = write!(f, "  * Block Data (len: {}, used: {} remain: {}, heap: {})\n",
+                     p.len_blocks(), p.blocks_used, p.blocks_remaining(), p.heap_block);
+        unsafe {
+            let ptr = p as *const RawPool;
+            let mut block = (*ptr).first_block();
+            while let Some(b) = block {
+                out = write!(f, "    {}\n", *b);
+                block = (*b).next_mut(&*ptr).map(|b| b as *mut Block);
+            }
+        }
+        out = write!(f, "  * Freed Bins (len: {}):\n",
+                     p.freed_bins.len);
+        unsafe {
+            for b in 0..NUM_BINS {
+                write!(f, "      bin {}: ", b).unwrap();
+                let mut freed = p.freed_bins.bins[b as usize].root(p);
+                while let Some(fr) = freed {
+                    write!(f, "{} ", fr.block()).unwrap();
+                    freed = fr.next().map(|b| p.freed(b))
+                }
+                write!(f, "\n");
+            }
+        }
+        out
+    }
+}
+
 impl RawPool {
+    pub fn display<'a>(&'a self) -> DisplayRawPool<'a> {
+        DisplayRawPool{pool: self}
+    }
+
     // Public unsafe API
 
     /// get a new RawPool
@@ -465,7 +524,7 @@ impl RawPool {
     }
 
     /// get the pointer to the first block
-    pub unsafe fn first_block(&mut self) -> Option<*mut Block> {
+    pub unsafe fn first_block(&self) -> Option<*mut Block> {
         if self.heap_block == 0 {
             None
         } else {
@@ -683,6 +742,7 @@ fn test_indexes() {
 
 
         println!("cleaning freed");
+        println!("{}", pool.display());
         pool.clean();
         {
             let free = pool.freed(free_block);
@@ -691,7 +751,7 @@ fn test_indexes() {
 
         // defrag and make sure everything looks like how one would expect it
         println!("defragging");
-        println!("heap={}", pool.heap_block);
+        println!("{}", pool.display());
         pool.defrag();
 
         assert_eq!(pool.freed_bins.len, 0);

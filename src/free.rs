@@ -34,10 +34,12 @@ impl fmt::Debug for Free {
         } else {
             self._next as isize
         };
-        write!(f, "Free {{blocks: {}, block: {}, prev: {}, next: {}}}",
+        let isvalid = if self.is_valid() {" "} else {"!"};
+        write!(f, "Free{}{{blocks: {}, block: {}, prev: {}, next: {}}}{}",
+               isvalid,
                self._blocks & BLOCK_BITMAP,
                self._block & BLOCK_BITMAP,
-               prev, next)
+               prev, next, isvalid)
     }
 }
 
@@ -170,8 +172,11 @@ impl Free {
     }
 
     fn assert_valid(&self) {
-        assert!(self._blocks & BLOCK_HIGH_BIT == 0, "{:?}", self);
-        assert!(self._blocks != 0, "{:?}", self);
+        assert!(self.is_valid(), "{:?}", self);
+    }
+
+    fn is_valid(&self) -> bool {
+        self._blocks & BLOCK_HIGH_BIT == 0 && self._blocks != 0
     }
 }
 
@@ -222,7 +227,7 @@ impl FreedRoot {
 
 }
 
-const NUM_BINS: u8 = 7;
+pub const NUM_BINS: u8 = 7;
 
 /// the FreedBins provide simple and fast access to freed data
 /// FreedBins is a private struct so all accessors are pub
