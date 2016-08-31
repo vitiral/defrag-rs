@@ -24,8 +24,20 @@ pub struct Free {
 
 impl fmt::Debug for Free {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Free {{blocks: {}, block: {}, prev: {:?}, next: {:?}}}",
-               self.blocks(), self.block(), self.prev(), self.next())
+        let prev: isize = if self._prev == BLOCK_NULL {
+            -1
+        } else {
+            self._prev as isize
+        };
+        let next = if self._next == BLOCK_NULL {
+            -1
+        } else {
+            self._next as isize
+        };
+        write!(f, "Free {{blocks: {}, block: {}, prev: {}, next: {}}}",
+               self._blocks & BLOCK_BITMAP,
+               self._block & BLOCK_BITMAP,
+               prev, next)
     }
 }
 
@@ -146,18 +158,20 @@ impl Free {
     /// returns the new freed value
     pub unsafe fn join(&mut self, pool: &mut RawPool, right: &mut Free) -> &mut Free {
         self.assert_valid();
+        right.assert_valid();
         // remove them both from any bins -- their combined bin might change
         // anyway
         self.remove(pool);
         right.remove(pool);
         self._blocks += right.blocks();
+        self.assert_valid();
         (*(pool as *mut RawPool)).freed_bins.insert(pool, self);
         self
     }
 
     fn assert_valid(&self) {
-        assert!(self._blocks & BLOCK_HIGH_BIT == 0);
-        assert!(self._blocks != 0);
+        assert!(self._blocks & BLOCK_HIGH_BIT == 0, "{:?}", self);
+        assert!(self._blocks != 0, "{:?}", self);
     }
 }
 
@@ -197,12 +211,12 @@ impl FreedRoot {
     }
 
     unsafe fn insert_root(&mut self, pool: &mut RawPool, freed: &mut Free) {
+        freed._prev = BLOCK_NULL;
         if let Some(cur_root) = self.root_mut(&mut *(pool as *mut RawPool)) {
             cur_root.set_prev(pool, Some(freed));
         } else {
             freed._next = BLOCK_NULL;
         }
-        freed._prev = BLOCK_NULL;
         self._root = freed.block();
     }
 

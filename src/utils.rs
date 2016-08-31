@@ -14,8 +14,9 @@ pub unsafe fn base_clean(pool: &mut RawPool,
     while let Some(block) = block_maybe {
         last_freed = match (*block).ty() {
             BlockType::Free => {
+                print!("block={:>3} ", (*block).block(pool));
                 let free = (*block).as_free_mut();
-                // println!("{:?}", free);
+                println!("{:?}", free);
                 match last_freed {
                     Some(ref last) => {
                         // combines the last with the current
@@ -30,8 +31,9 @@ pub unsafe fn base_clean(pool: &mut RawPool,
                 }
             },
             BlockType::Full => {
+                print!("block={:>3} ", (*block).block(pool));
                 let full = (*block).as_full_mut();
-                // println!("{:?}", full);
+                println!("{:?}", full);
                 full_fn(pool, last_freed, full)
             }
         };

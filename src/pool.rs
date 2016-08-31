@@ -61,6 +61,7 @@ impl Block {
         } else {
             assert!(block + blocks < pool.heap_block);
             let ptr = self as *mut Block;
+            assert!((*ptr).blocks() != 0);
             Some(mem::transmute(ptr.offset(blocks as isize)))
         }
     }
@@ -157,7 +158,10 @@ pub struct Full {
 impl fmt::Debug for Full {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Full {{blocks: {}, index: {}, L: {}}}",
-               self.blocks(), self.index(), self.is_locked())
+               self._blocks & BLOCK_BITMAP,
+               self._index & BLOCK_BITMAP,
+               self._index & INDEX_HIGH_BIT == INDEX_HIGH_BIT,
+        )
     }
 }
 
@@ -191,8 +195,8 @@ impl Full {
     }
 
     fn assert_valid(&self) {
-        assert!(self._blocks & BLOCK_HIGH_BIT == BLOCK_HIGH_BIT);
-        assert!(self._blocks & BLOCK_BITMAP != 0);
+        assert!(self._blocks & BLOCK_HIGH_BIT == BLOCK_HIGH_BIT, "{:?}", self);
+        assert!(self._blocks & BLOCK_BITMAP != 0, "{:?}", self);
     }
 }
 
@@ -317,7 +321,6 @@ impl RawPool {
         let freed = self.freed_mut(block) as *mut Free;
         (*freed)._blocks &= BLOCK_BITMAP;  // set first bit to 0, needed to read blocks()
         let blocks = (*freed).blocks();
-        println!("removing blocks: {}", blocks);
 
         // check if the freed is actually at the end of allocated heap, if so
         // just move the heap back
@@ -361,7 +364,7 @@ impl RawPool {
                             let i = full.index();
                             let blocks = full.blocks();
                             let mut free_tmp = (**free).clone();
-                            println!("free tmp: {:?}", free_tmp);
+                            // println!("free tmp: {:?}", free_tmp);
                             let fullptr: *mut Block = mem::transmute(full);  // note: consumes full
 
                             // perform the move of the data
@@ -679,6 +682,7 @@ fn test_indexes() {
         pool.dealloc_index(allocs.1);
 
 
+        println!("cleaning freed");
         pool.clean();
         {
             let free = pool.freed(free_block);
@@ -686,6 +690,8 @@ fn test_indexes() {
         }
 
         // defrag and make sure everything looks like how one would expect it
+        println!("defragging");
+        println!("heap={}", pool.heap_block);
         pool.defrag();
 
         assert_eq!(pool.freed_bins.len, 0);
