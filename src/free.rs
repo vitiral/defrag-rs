@@ -10,7 +10,7 @@ use super::pool::RawPool;
 /// the Free struct is a linked list of free values with
 /// the root as a size-bin in pool
 #[repr(C, packed)]
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Free {
     // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `Full._blocks`
     // The first bit of `_blocks` is always 0 for Free structs

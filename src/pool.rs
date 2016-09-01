@@ -25,7 +25,7 @@ pub enum BlockType {
 }
 
 #[repr(C, packed)]
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct Block {
     _a: Free,
     _b: Free,
@@ -72,7 +72,7 @@ impl Block {
             assert!(block + blocks < pool.heap_block);
             let ptr = self as *mut Block;
             assert!((*ptr).blocks() != 0);
-            Some(mem::transmute(ptr.offset(blocks as isize)))
+            Some(&mut *ptr.offset(blocks as isize))
         }
     }
 
@@ -86,26 +86,26 @@ impl Block {
 
     pub unsafe fn as_free(&self) -> &Free {
         assert_eq!(self.ty(), BlockType::Free);
-        let ptr = self as *const Block;
-        mem::transmute(ptr)
+        let ptr: *const Free = mem::transmute(self as *const Block);
+        &*ptr
     }
 
     pub unsafe fn as_free_mut(&mut self) -> &mut Free {
         assert_eq!(self.ty(), BlockType::Free);
-        let ptr = self as *mut Block;
-        mem::transmute(ptr)
+        let ptr: *mut Free = mem::transmute(self as *mut Block);
+        &mut *ptr
     }
 
     pub unsafe fn as_full(&self) -> &Full {
         assert_eq!(self.ty(), BlockType::Full);
-        let ptr = self as *const Block;
-        mem::transmute(ptr)
+        let ptr: *const Full = mem::transmute(self as *const Block);
+        &*ptr
     }
 
     pub unsafe fn as_full_mut(&mut self) -> &mut Full {
         assert_eq!(self.ty(), BlockType::Full);
-        let ptr = self as *mut Block;
-        mem::transmute(ptr)
+        let ptr: *mut Full = mem::transmute(self as *mut Block);
+        &mut *ptr
     }
 }
 
@@ -261,9 +261,8 @@ impl<'a> fmt::Display for DisplayRawPool<'a> {
                    p.len_indexes(), p.indexes_used, p.indexes_remaining()));
         for i in 0..p.len_indexes() {
             let index = unsafe{p.index(i)};
-            match index.block_maybe() {
-                Some(block) => try!(write!(f, "      {:<5}: {}\n", i, block)),
-                None => {},
+            if let Some(block) = index.block_maybe() {
+                try!(write!(f, "      {:<5}: {}\n", i, block));
             }
         }
         try!(write!(f, "  * blocks_ptr: {:?}\n", p._blocks));
@@ -291,7 +290,7 @@ impl<'a> fmt::Display for DisplayRawPool<'a> {
                 try!(write!(f, "      [{}] bin {}: ", FreedBins::bin_repr(b), b));
                 let mut freed = p.freed_bins.bins[b as usize].root(p);
                 while let Some(fr) = freed {
-                    write!(f, "{} ", fr.block());
+                    try!(write!(f, "{} ", fr.block()));
                     freed = fr.next().map(|b| p.freed(b))
                 }
                 try!(write!(f, "\n"));
@@ -302,7 +301,7 @@ impl<'a> fmt::Display for DisplayRawPool<'a> {
 }
 
 impl RawPool {
-    pub fn display<'a>(&'a self) -> DisplayRawPool<'a> {
+    pub fn display(&self) -> DisplayRawPool {
         DisplayRawPool{pool: self}
     }
 
@@ -377,12 +376,12 @@ impl RawPool {
             return Err(Error::Fragmented)
         };
         // set the index data
-        unsafe {
+        {
             let index = self.index_mut(i);
             index._block = block
         }
         // set the full data in the block
-        unsafe {
+        {
             let full = self.full_mut(block);
             full._blocks = blocks | BLOCK_HIGH_BIT;
             full._index = i;  // starts unlocked
@@ -421,6 +420,7 @@ impl RawPool {
     }
     // /// combine all contiguous freed blocks together.
     pub unsafe fn clean(&mut self) {
+        #[allow(unused_variables)]
         fn full_fn(pool: &mut RawPool, last_freed: Option<*mut Free>, full: &mut Full)
                    -> Option<*mut Free> {None}
         utils::base_clean(self, &full_fn);
@@ -434,62 +434,59 @@ impl RawPool {
             unsafe {
                 let poolptr = pool as *mut RawPool;
                 match last_freed {
-                    Some(ref free) => match full.is_locked() {
-                        false => {
-                            // found an unlocked full value and the last value is free -- move it!
-                            // moving is surprisingly simple because:
-                            //  - the free.blocks does not change, so it does not change bins
-                            //  - the free.prev/next do not change
-                            //  - only the locations of full and free change, requiring their
-                            //      data, and the items pointing at them, to be updated
-                            println!("### Moving Backwards:\n{}", pool.display());
-                            let i = full.index();
-                            let blocks = full.blocks();
-                            println!("blocks={}", blocks);
-                            let mut free_tmp = (**free).clone();
-                            println!("before tmp: {:?}", free_tmp);
-                            let fullptr: *mut Block = mem::transmute(full);  // note: consumes full
+                    Some(ref free) => if full.is_locked() {
+                        None  // locked full value, can't move
+                    } else {
+                        // found an unlocked full value and the last value is free -- move it!
+                        // moving is surprisingly simple because:
+                        //  - the free.blocks does not change, so it does not change bins
+                        //  - the free.prev/next do not change
+                        //  - only the locations of full and free change, requiring their
+                        //      data, and the items pointing at them, to be updated
+                        println!("### Moving Backwards:\n{}", pool.display());
+                        let i = full.index();
+                        let blocks = full.blocks();
+                        println!("blocks={}", blocks);
+                        let mut free_tmp = (**free).clone();
+                        println!("before tmp: {:?}", free_tmp);
+                        let fullptr = full as *mut Full as *mut Block;
 
-                            // perform the move of the data
-                            ptr::copy(fullptr, (*free) as *mut Block, blocks as usize);
-                            println!("after  tmp: {:?}", free_tmp);
+                        // perform the move of the data
+                        ptr::copy(fullptr, (*free) as *mut Block, blocks as usize);
+                        println!("after  tmp: {:?}", free_tmp);
 
-                            // it would be bad if we tried to access these anymore
-                            drop(free);
-                            drop(fullptr);
+                        // Note: don't use free, full or fullptr after this
 
-                            // full's data was already copied (blocks + index), only need
-                            // to update the static Index's data
-                            (*poolptr).index_mut(i)._block = free_tmp.block();
+                        // full's data was already copied (blocks + index), only need
+                        // to update the static Index's data
+                        (*poolptr).index_mut(i)._block = free_tmp.block();
 
-                            // update the free block's location and get it
-                            free_tmp._block += blocks;
+                        // update the free block's location and get it
+                        free_tmp._block += blocks;
 
-                            // update the items pointing TO free
-                            match free_tmp.prev() {
-                                Some(p) => (*poolptr).freed_mut(p)._next = free_tmp.block(),
-                                None => {
-                                    // the previous item is a bin, so we have to
-                                    // do surgery in the freed bins
-                                    let freed_bins = &mut (*poolptr).freed_bins;
-                                    let bin = freed_bins.get_insert_bin(
-                                        free_tmp.blocks());
-                                    freed_bins.bins[bin as usize]._root = free_tmp.block();
-                                }
+                        // update the items pointing TO free
+                        match free_tmp.prev() {
+                            Some(p) => (*poolptr).freed_mut(p)._next = free_tmp.block(),
+                            None => {
+                                // the previous item is a bin, so we have to
+                                // do surgery in the freed bins
+                                let freed_bins = &mut (*poolptr).freed_bins;
+                                let bin = freed_bins.get_insert_bin(
+                                    free_tmp.blocks());
+                                freed_bins.bins[bin as usize]._root = free_tmp.block();
                             }
-                            if let Some(n) = free_tmp.next() {
-                                (*poolptr).freed_mut(n)._prev = free_tmp.block();
-                            }
-
-                            // actually store the new free in pool._blocks
-                            let new_free_loc = (*poolptr).freed_mut(free_tmp._block);
-                            *new_free_loc = free_tmp;
-
-                            println!("new free: {:?}", new_free_loc);
-                            // the new_free is the last_freed for the next cycle
-                            Some(new_free_loc as *mut Free)
                         }
-                        true => None, // locked full value, can't move
+                        if let Some(n) = free_tmp.next() {
+                            (*poolptr).freed_mut(n)._prev = free_tmp.block();
+                        }
+
+                        // actually store the new free in pool._blocks
+                        let new_free_loc = (*poolptr).freed_mut(free_tmp._block);
+                        *new_free_loc = free_tmp;
+
+                        println!("new free: {:?}", new_free_loc);
+                        // the new_free is the last_freed for the next cycle
+                        Some(new_free_loc as *mut Free)
                     },
                     None => None,  // the previous value is not free, can't move
                 }
@@ -529,24 +526,20 @@ impl RawPool {
     }
 
     /// get the index
+    #[allow(should_implement_trait)] 
     pub unsafe fn index(&self, i: IndexLoc) -> &Index {
-        let ptr = self._indexes.offset(i as isize);
-        mem::transmute(ptr)
+        &*self._indexes.offset(i as isize)
     }
 
     // semi-private unsafe API
 
     pub unsafe fn index_mut(&self, i: IndexLoc) -> &mut Index {
-        let ptr = self._indexes.offset(i as isize);
-        mem::transmute(ptr)
+        &mut *self._indexes.offset(i as isize)
     }
 
     /// get the raw ptr to the data at block
     pub unsafe fn ptr(&self, block: BlockLoc) -> *const u8 {
-        let free = self.freed(block);
-        let mut ptr: *const u8 = mem::transmute(free);
-        ptr = ptr.offset(mem::size_of::<Full>() as isize);
-        ptr
+        self._blocks.offset(block as isize) as *const u8
     }
 
     /// get the pointer to the first block
@@ -646,8 +639,9 @@ fn test_basic() {
 /// test using raw indexes
 fn test_indexes() {
     unsafe {
-        let mut indexes = [Index::default(); 256];
-        let mut blocks = [Block::default(); 4096];
+        let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = unsafe {
+            ([Index::default(); 256], mem::zeroed())
+        };
         let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
         let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
 
