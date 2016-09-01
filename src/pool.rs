@@ -232,13 +232,13 @@ impl Full {
 /// and defragmentation.
 pub struct RawPool {
     // blocks and statistics
-    _blocks: *mut Block,     // actual data
+    pub _blocks: *mut Block,     // actual data
     _blocks_len: BlockLoc,      // len of blocks
     pub heap_block: BlockLoc,       // the current location of the "heap"
     pub blocks_used: BlockLoc,       // total memory currently used
 
     // indexes and statistics
-    _indexes: *mut Index,    // does not move and stores movable block location of data
+    pub _indexes: *mut Index,    // does not move and stores movable block location of data
     _indexes_len: IndexLoc,     // len of indexes
     last_index_used: IndexLoc,  // for speeding up finding indexes
     indexes_used: IndexLoc,     // total number of indexes used
@@ -315,12 +315,6 @@ impl RawPool {
     pub unsafe fn new(indexes: *mut Index, indexes_len: IndexLoc,
                blocks: *mut Block, blocks_len: BlockLoc)
                -> RawPool {
-        if indexes_len > IndexLoc::max_value() / 2 {
-            panic!("indexes_len too large");
-        }
-        if blocks_len > BlockLoc::max_value() / 2 {
-            panic!("blocks_len too large");
-        }
         // initialize all indexes to INDEX_NULL
         let mut ptr = indexes;
         for _ in 0..indexes_len {
@@ -538,8 +532,9 @@ impl RawPool {
     }
 
     /// get the raw ptr to the data at block
-    pub unsafe fn ptr(&self, block: BlockLoc) -> *const u8 {
-        self._blocks.offset(block as isize) as *const u8
+    pub unsafe fn data(&self, block: BlockLoc) -> *mut u8 {
+        let p = self._blocks.offset(block as isize) as *mut u8;
+        p.offset(mem::size_of::<Full>() as isize)
     }
 
     /// get the pointer to the first block

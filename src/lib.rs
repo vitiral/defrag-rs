@@ -1,4 +1,6 @@
 #![allow(unknown_lints)]
+#![feature(alloc)]
+#![feature(heap_api)]
 #![feature(const_fn)]
 
 // #![no_std]
@@ -7,6 +9,7 @@
 // #[cfg(test)] use std::prelude::*;
 
 extern crate core;
+extern crate alloc;
 
 
 mod types;

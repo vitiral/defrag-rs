@@ -1,8 +1,12 @@
 use core;
+use core::ptr;
 use core::cell::UnsafeCell;
 use core::mem;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
+use core::default::Default;
+
+use alloc::heap;
 
 use super::types::{Result, Error, IndexLoc, BlockLoc};
 use super::pool::{RawPool, Index, Block, Full};
@@ -17,22 +21,113 @@ pub enum TryLockError {
     /// otherwise block.
     WouldBlock,
 }
-
-pub struct Pool {
-    raw: *mut RawPool,
-}
-
 /// return the ceiling of a / b
 fn ceil(a: usize, b: usize) -> usize {
     a / b + (if a % b != 0 {1} else {0})
 }
 
+/**
+`Pool` contains a "pool" of memory which can be allocated and used
+
+Pool memory can be accessed through the `alloc` and `alloc_slice` methods
+returning memory protected behind a `Mutex`. The Mutex allows Pool to
+defragment application memory when it is not in use, solving the problem
+of memory fragmentation for embedded systems.
+ */
+pub struct Pool {
+    raw: *mut RawPool,
+}
+
+impl Drop for Pool {
+    fn drop(&mut self) {
+        unsafe {
+            let align = mem::size_of::<usize>();
+            let size_raw = mem::size_of::<RawPool>();
+            let raw = &mut *self.raw;
+            let size_indexes = raw.len_indexes() as usize * mem::size_of::<Index>();
+            let size_blocks = raw.len_blocks() as usize * mem::size_of::<Block>();
+
+            // They have to be deallocated in the order they were allocated
+            heap::deallocate(raw._indexes as *mut u8, size_indexes, align);
+            heap::deallocate(raw._blocks as *mut u8, size_blocks, align);
+            heap::deallocate(self.raw as *mut u8, size_raw, align);
+        }
+    }
+}
+
 impl Pool {
-    pub fn new(raw: *mut RawPool) -> Pool {
-        Pool { raw: raw }
+    /**
+    This is currently unsafe because it requires raw pointers.
+    It is up the user to ensure that the data being used by
+    RawPool, as well as RawPool itself, do not go out of scope.
+
+    Pool and RawPool should only be created at the top level of program
+    execution, where they cannot go out of scope. Basically, they should
+    be initialized like:
+
+    ```
+    // all of the `let` statements are VERY important -- it ensures
+    // data does not go out of scope!
+    // let mut indexes = Heap::new([Index::default(); 256]);
+    // let mut blocks = Heap::new([Block::default(); 4096]);
+    // let mut raw_pool = unsafe {
+    //     let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
+    //     let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
+    //     RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc)
+    // };
+    // let mut pool = unsafe {Pool::new(&mut raw_pool as *mut RawPool);
+    ```
+
+    The `Heap` struct represents something like `Box` but which cannot be droped
+    (it is data directly off an unmanaged heap). It is yet to be implemented as
+    far as I know. For testing it can be replaced with `Box`
+    */
+    pub fn new(size: usize, indexes: IndexLoc) -> Result<Pool> {
+        let num_blocks = ceil(size, mem::size_of::<Block>());
+        if indexes > IndexLoc::max_value() / 2
+                || num_blocks > BlockLoc::max_value() as usize / 2 {
+            return Err(Error::InvalidSize)
+        }
+        unsafe {
+            let num_indexes = indexes;
+            let size_raw = mem::size_of::<RawPool>();
+            // allocate our memory
+            let align = mem::size_of::<usize>();
+            let pool = heap::allocate(size_raw, align);
+            if pool.is_null() {
+                return Err(Error::OutOfMemory);
+            }
+            let size_indexes = indexes as usize * mem::size_of::<Index>();
+            let indexes = heap::allocate(size_indexes, align);
+            if indexes.is_null() {
+                heap::deallocate(pool, size_raw, align);
+                return Err(Error::OutOfMemory);
+            }
+            let size_blocks = num_blocks * mem::size_of::<Block>();
+            let blocks = heap::allocate(size_blocks, align);
+            if blocks.is_null() {
+                heap::deallocate(indexes, size_indexes, align);
+                heap::deallocate(pool, size_raw, align);
+                return Err(Error::OutOfMemory);
+            }
+
+            let pool = pool as *mut RawPool;
+            let mut indexes = indexes as *mut Index;
+            let mut blocks = blocks as *mut Block;
+
+            // initialize our memory and return
+            *pool = RawPool::new(indexes, num_indexes, blocks, num_blocks as u16);
+            Ok(Pool { raw: pool })
+        }
     }
 
-    pub fn alloc<T>(&self) -> Result<Mutex<T>> {
+    /// attempt to allocate a block of memory of size T, returning `Result<Mutex<T>>`
+    ///
+    /// If `Ok(Mutex<T>)`, the memory will have been initialized to `T.default`
+    /// and can be unlocked and used by calling `Mutex.try_lock`
+    ///
+    /// For error results, see `Error`
+    pub fn alloc<T: Default>(&self) -> Result<Mutex<T>> {
         unsafe {
             let actual_size: usize = mem::size_of::<Full>() + mem::size_of::<T>();
             let blocks = ceil(actual_size, mem::size_of::<Block>());
@@ -40,11 +135,21 @@ impl Pool {
                 return Err(Error::InvalidSize);
             }
             let i = try!((*self.raw).alloc_index(blocks as u16));
+            let index = (*self.raw).index(i);
+            let mut p = (*self.raw).data(index.block()) as *mut T;
+            *p = T::default();
             Ok(Mutex{index: i, pool: self, _type: PhantomData})
         }
     }
 
-    pub fn alloc_slice<T>(&self, len: BlockLoc) -> Result<SliceMutex<T>> {
+    /// attempt to allocate a slice of memory with `len` of `T` elements,
+    /// returning `Result<SliceMutex<T>>`
+    ///
+    /// If `Ok(SliceMutex<T>)`, all elements of the slice will have been initialized to `T.default`
+    /// and can be unlocked and used by calling `Mutex.try_lock`
+    ///
+    /// For error results, see `Error`
+    pub fn alloc_slice<T: Default>(&self, len: BlockLoc) -> Result<SliceMutex<T>> {
         unsafe {
             let actual_size: usize = mem::size_of::<Full>() + mem::size_of::<T>() * len as usize;
             let blocks = ceil(actual_size, mem::size_of::<Block>());
@@ -52,6 +157,12 @@ impl Pool {
                 return Err(Error::InvalidSize);
             }
             let i = try!((*self.raw).alloc_index(blocks as u16));
+            let index = (*self.raw).index(i);
+            let mut p = (*self.raw).data(index.block()) as *mut T;
+            for _ in 0..len {
+                *p = T::default();
+                p = p.offset(1);
+            }
             Ok(SliceMutex{index: i, len: len, pool: self, _type: PhantomData})
         }
     }
@@ -96,7 +207,7 @@ impl<'a, T: 'a> Deref for MutexGuard<'a, T> {
         unsafe {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
-            mem::transmute(pool.ptr(index.block()))
+            mem::transmute(pool.data(index.block()))
         }
     }
 }
@@ -106,7 +217,7 @@ impl<'a, T: 'a> DerefMut for MutexGuard<'a, T> {
         unsafe {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
-            mem::transmute(pool.ptr(index.block()))
+            mem::transmute(pool.data(index.block()))
         }
     }
 }
@@ -147,7 +258,7 @@ impl<'a, T: 'a> SliceMutexGuard<'a, T> {
         unsafe {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
-            let t: *const T = mem::transmute(pool.ptr(index.block()));
+            let t: *const T = mem::transmute(pool.data(index.block()));
             core::slice::from_raw_parts(t, self.__lock.len as usize)
         }
     }
@@ -156,7 +267,7 @@ impl<'a, T: 'a> SliceMutexGuard<'a, T> {
         unsafe {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
-            let t: *mut T = mem::transmute(pool.ptr(index.block()));
+            let t: *mut T = mem::transmute(pool.data(index.block()));
             core::slice::from_raw_parts_mut(t, self.__lock.len as usize)
         }
     }
@@ -164,17 +275,7 @@ impl<'a, T: 'a> SliceMutexGuard<'a, T> {
 
 #[test]
 fn test_alloc() {
-    let mut indexes = [Index::default(); 256];
-    let mut blocks = [Block::default(); 4096];
-    let mut raw_pool = unsafe {
-        let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
-        let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
-        RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc)
-    };
-
-    let praw = &mut raw_pool as *mut RawPool;
-    let mut pool = Pool::new(praw);
-
+    let pool = Pool::new(4096, 256).unwrap();
     let expected = 0x01010101;
 
     let alloced = pool.alloc::<u32>();
@@ -201,16 +302,7 @@ fn test_alloc() {
 
 #[test]
 fn test_alloc_slice() {
-    let mut indexes = [Index::default(); 256];
-    let mut blocks = [Block::default(); 4096];
-    let mut raw_pool = unsafe {
-        let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
-        let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
-        RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc)
-    };
-
-    let praw = &mut raw_pool as *mut RawPool;
-    let mut pool = Pool::new(praw);
+    let pool = Pool::new(4096 * mem::size_of::<Block>(), 256).unwrap();
 
     {
         let alloced = pool.alloc_slice::<u16>(10000);
@@ -220,7 +312,7 @@ fn test_alloc_slice() {
         {
             let rmut = unwrapped_locked.deref_mut();
             for n in 0..10000 {
-                // assert_eq!(rmut[n], 0);
+                assert_eq!(rmut[n], 0);
                 rmut[n] = n as u16;
             }
         }
