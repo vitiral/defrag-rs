@@ -35,10 +35,10 @@ impl fmt::Debug for Free {
             self._next as isize
         };
         let isvalid = if self.is_valid() {" "} else {"!"};
-        write!(f, "Free{}{{blocks: {}, block: {}, prev: {}, next: {}}}{}",
+        write!(f, "Free{}{{block: {}, blocks: {}, prev: {}, next: {}}}{}",
                isvalid,
-               self._blocks & BLOCK_BITMAP,
                self._block & BLOCK_BITMAP,
+               self._blocks & BLOCK_BITMAP,
                prev, next, isvalid)
     }
 }
@@ -249,6 +249,19 @@ impl FreedBins {
             256 ...1023  => 4,
             1024...4095  => 5,
             _            => 6,
+        }
+    }
+
+    pub fn bin_repr(bin: u8) -> &'static str {
+        match bin {
+            0 => "1   ...3   ",
+            1 => "4   ...15  ",
+            2 => "16  ...63  ",
+            3 => "63  ...255 ",
+            4 => "256 ...1023",
+            5 => "1024...4095",
+            6 => "4096...    ",
+            _ => "INVALID",
         }
     }
 
