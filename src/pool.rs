@@ -25,7 +25,7 @@ pub enum BlockType {
 }
 
 #[repr(C, packed)]
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct Block {
     _a: Free,
     _b: Free,
@@ -572,7 +572,7 @@ impl RawPool {
 
     /// mut the block as a Full block
     pub unsafe fn full_mut(&self, block: BlockLoc) -> &mut Full {
-        &mut (self._blocks.offset(block as isize) as *mut Full)
+        &mut *(self._blocks.offset(block as isize) as *mut Full)
     }
 
     // private API

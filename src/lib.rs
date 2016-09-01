@@ -1,3 +1,4 @@
+#![allow(unknown_lints)]
 #![feature(const_fn)]
 
 // #![no_std]
