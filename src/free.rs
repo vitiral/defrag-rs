@@ -132,7 +132,7 @@ impl Free {
 
     /// remove self from the freed pool
     /// this also keeps track of the statistics for number of freed blocks
-    unsafe fn remove(&mut self, pool: &mut RawPool) {
+    pub unsafe fn remove(&mut self, pool: &mut RawPool) {
         self.assert_valid();
         /// convinience function for this method only
         unsafe fn get_freed<'a>(pool: &'a mut RawPool, block: Option<block>) -> Option<&'a mut Free> {

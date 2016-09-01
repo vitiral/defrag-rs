@@ -50,4 +50,10 @@ pub unsafe fn base_clean(pool: &mut RawPool,
             None => None,
         };
     }
+    if let Some(ref last) = last_freed {
+        // there is freed data before the heap
+        assert_eq!((**last).block() + (**last).blocks(), pool.heap_block);
+        pool.heap_block -= (**last).blocks();
+        (**last).remove(pool);
+    }
 }

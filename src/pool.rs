@@ -736,7 +736,7 @@ fn test_indexes() {
         assert_eq!(i3, 7);
         times_allocated += 1;
         used_indexes += 1;
-        blocks_allocated += 8;
+        blocks_allocated += 2;
         assert_eq!(i3, times_allocated - 1);
         let block3;
         {
@@ -789,6 +789,8 @@ fn test_indexes() {
         println!("{}", pool.display());
         pool.defrag();
 
+        println!("done defragging");
+        println!("{}", pool.display());
         assert_eq!(pool.freed_bins.len, 0);
         assert_eq!(pool.blocks_used, blocks_allocated);
         assert_eq!(pool.indexes_used, used_indexes);
