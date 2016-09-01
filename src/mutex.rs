@@ -57,30 +57,14 @@ impl Drop for Pool {
 
 impl Pool {
     /**
-    This is currently unsafe because it requires raw pointers.
-    It is up the user to ensure that the data being used by
-    RawPool, as well as RawPool itself, do not go out of scope.
+    Create a new pool of the requested size and number of indexes
 
-    Pool and RawPool should only be created at the top level of program
-    execution, where they cannot go out of scope. Basically, they should
-    be initialized like:
+    `size` is total size of the internal block pool. Some of this space
+    will be used to keep track of the size and index of the allocated data.
 
-    ```
-    // all of the `let` statements are VERY important -- it ensures
-    // data does not go out of scope!
-    // let mut indexes = Heap::new([Index::default(); 256]);
-    // let mut blocks = Heap::new([Block::default(); 4096]);
-    // let mut raw_pool = unsafe {
-    //     let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
-    //     let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
-    //     RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc)
-    // };
-    // let mut pool = unsafe {Pool::new(&mut raw_pool as *mut RawPool);
-    ```
-
-    The `Heap` struct represents something like `Box` but which cannot be droped
-    (it is data directly off an unmanaged heap). It is yet to be implemented as
-    far as I know. For testing it can be replaced with `Box`
+    `indexes` are the total number of indexes available. This is the maximum
+    number of simultanious allocations that can be taken out of the pool.
+    Allocating a Mutex uses an index, dropping the Mutex frees the index.
     */
     pub fn new(size: usize, indexes: IndexLoc) -> Result<Pool> {
         let num_blocks = ceil(size, mem::size_of::<Block>());
@@ -117,11 +101,20 @@ impl Pool {
 
             // initialize our memory and return
             *pool = RawPool::new(indexes, num_indexes, blocks, num_blocks as u16);
-            Ok(Pool { raw: pool })
+            Ok(Pool::from_raw(pool))
         }
     }
 
-    /// attempt to allocate a block of memory of size T, returning `Result<Mutex<T>>`
+    /// get a Pool from a RawPool that you have initialized
+    ///
+    /// it is important that you call mem::forget on the Pool
+    /// and deallocate the underlying memory yourself
+    /// when you are done with it
+    pub unsafe fn from_raw(raw: *mut RawPool) -> Pool {
+        Pool { raw: raw }
+    }
+
+    /// attempt to allocate memory of type T, returning `Result<Mutex<T>>`
     ///
     /// If `Ok(Mutex<T>)`, the memory will have been initialized to `T.default`
     /// and can be unlocked and used by calling `Mutex.try_lock`
