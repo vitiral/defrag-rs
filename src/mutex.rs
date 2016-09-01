@@ -164,6 +164,14 @@ impl Pool {
 // ##################################################
 // # Standard Mutex
 
+/**
+all allocated data is represented as a Mutex. When the data
+is unlocked, the underlying `Pool` is free to move it and
+reduce fragmentation
+
+See https://doc.rust-lang.org/std/sync/struct.Mutex.html for
+more information on the general API
+*/
 pub struct Mutex<'a, T> {
     index: IndexLoc,
     pool: &'a Pool,
@@ -171,6 +179,7 @@ pub struct Mutex<'a, T> {
 }
 
 impl<'a, T> Mutex<'a, T> {
+    /// try to obain a lock on the memory
     pub fn try_lock(&'a self) -> TryLockResult<MutexGuard<T>> {
         unsafe {
             let pool = &*self.pool.raw;
@@ -188,6 +197,9 @@ impl<'a, T> Mutex<'a, T> {
 }
 
 
+/// represents memory which can be used.
+/// dropping this unlocks the memory and allows it to be
+/// defragmentated.
 pub struct MutexGuard<'a, T: 'a> {
     // Maybe remove this 'a?
     __lock: &'a Mutex<'a, T>,
@@ -218,6 +230,9 @@ impl<'a, T: 'a> DerefMut for MutexGuard<'a, T> {
 // ##################################################
 // # Slice Mutex
 
+/// same as `Mutex` except wrapps a slice
+///
+/// see: https://doc.rust-lang.org/std/slice/
 pub struct SliceMutex<'a, T> {
     index: IndexLoc,
     pool: &'a Pool,
@@ -226,6 +241,7 @@ pub struct SliceMutex<'a, T> {
 }
 
 impl<'a, T> SliceMutex<'a, T> {
+    /// see `Mutex.try_lock`
     pub fn try_lock(&'a self) -> TryLockResult<SliceMutexGuard<T>> {
         unsafe {
             let pool = &*self.pool.raw;
@@ -247,6 +263,8 @@ pub struct SliceMutexGuard<'a, T: 'a> {
 }
 
 impl<'a, T: 'a> SliceMutexGuard<'a, T> {
+    /// rust's type system does not allow Deref to implement `&[T]`,
+    /// so you must call `deref` explicitly to use your slice
     fn deref(&mut self) -> &[T] {
         unsafe {
             let pool = &*self.__lock.pool.raw;
@@ -256,6 +274,8 @@ impl<'a, T: 'a> SliceMutexGuard<'a, T> {
         }
     }
 
+    /// rust's type system does not allow Deref to implement `&mut [T]`,
+    /// so you must call `deref_mut` explicitly to use your slice
     fn deref_mut(&mut self) -> &mut [T] {
         unsafe {
             let pool = &*self.__lock.pool.raw;
