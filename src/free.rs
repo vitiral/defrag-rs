@@ -2,7 +2,7 @@ use core::default::Default;
 use core::fmt;
 
 use super::types::*;
-use super::pool::RawPool;
+use super::raw_pool::RawPool;
 
 // ##################################################
 // # Free

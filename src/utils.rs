@@ -1,4 +1,4 @@
-use super::pool::*;
+use super::raw_pool::*;
 use super::free::*;
 
 /// base clean function which allows the user to add functionality

@@ -14,15 +14,15 @@ extern crate alloc;
 
 mod types;
 mod free;
+mod raw_pool;
 mod pool;
-mod mutex;
 mod utils;
 
 
 pub use types::{Error, Result};
-pub use pool::{Block, RawPool};
-pub use mutex::{TryLockResult, TryLockError,
-                Pool,
-                Mutex, MutexGuard,
-                SliceMutex, SliceMutexGuard};
+pub use raw_pool::{Block, RawPool};
+pub use pool::{TryLockResult, TryLockError,
+               Pool,
+               Mutex, MutexGuard,
+               SliceMutex, SliceMutexGuard};
 

@@ -1,775 +1,338 @@
-/*
-Contains all the logic related to the RawPool. The RawPool is
-what actually contains and maintains the indexes and memory.
-*/
-
-use core::mem;
-use core::ptr;
+use core::result;
 use core::default::Default;
-use core::fmt;
+use core::ops::{Deref, DerefMut};
+use core::marker::PhantomData;
+use core::mem;
+use core::slice;
 
-use super::types::*;
-use super::free::{FreedBins, Free, NUM_BINS};
-use super::utils;
+use alloc::heap;
 
-// ##################################################
-// # Block
+use super::types::{Result, Error, IndexLoc, BlockLoc};
+use super::raw_pool::{RawPool, Index, Block, Full};
 
-// a single block, currently == 2 Free blocks which
-// is 128 bits
+pub type TryLockResult<T> = result::Result<T, TryLockError>;
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum BlockType {
-    Free,
-    Full,
+/// An enumeration of possible errors which can occur while calling the
+/// `try_lock` method.
+#[derive(Debug)]
+pub enum TryLockError {
+    /// The lock could not be acquired at this time because the operation would
+    /// otherwise block.
+    WouldBlock,
+}
+/// return the ceiling of a / b
+fn ceil(a: usize, b: usize) -> usize {
+    a / b + (if a % b != 0 {1} else {0})
 }
 
-#[repr(C, packed)]
-#[derive(Copy, Clone)]
-pub struct Block {
-    _a: Free,
-    _b: Free,
+/**
+`Pool` contains a "pool" of memory which can be allocated and used
+
+Pool memory can be accessed through the `alloc` and `alloc_slice` methods
+returning memory protected behind a `Mutex`. The Mutex allows Pool to
+defragment application memory when it is not in use, solving the problem
+of memory fragmentation for embedded systems.
+ */
+pub struct Pool {
+    raw: *mut RawPool,
 }
 
-impl fmt::Debug for Block {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "B<{:?}> {{blocks: {}}}",
-               self.ty(), self._a._blocks & BLOCK_BITMAP)
-    }
-}
-
-impl fmt::Display for Block {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Drop for Pool {
+    fn drop(&mut self) {
         unsafe {
-            match self.ty() {
-                BlockType::Free => write!(f, "{:?}", self.as_free()),
-                BlockType::Full => write!(f, "{:?}", self.as_full()),
-            }
+            let align = mem::size_of::<usize>();
+            let size_raw = mem::size_of::<RawPool>();
+            let raw = &mut *self.raw;
+            let size_indexes = raw.len_indexes() as usize * mem::size_of::<Index>();
+            let size_blocks = raw.len_blocks() as usize * mem::size_of::<Block>();
+
+            // They have to be deallocated in the order they were allocated
+            heap::deallocate(raw._indexes as *mut u8, size_indexes, align);
+            heap::deallocate(raw._blocks as *mut u8, size_blocks, align);
+            heap::deallocate(self.raw as *mut u8, size_raw, align);
         }
     }
 }
 
-impl Block {
-    pub fn blocks(&self) -> BlockLoc {
-        let out = self._a._blocks & BLOCK_BITMAP;
-        assert!(out != 0);
-        out
-    }
+impl Pool {
+    /**
+    Create a new pool of the requested size and number of indexes
 
-    pub unsafe fn block(&self, pool: &RawPool) -> BlockLoc {
-        match self.ty() {
-            BlockType::Free => self.as_free().block(),
-            BlockType::Full => pool.index(self.as_full().index()).block(),
+    `size` is total size of the internal block pool. Some of this space
+    will be used to keep track of the size and index of the allocated data.
+
+    `indexes` are the total number of indexes available. This is the maximum
+    number of simultanious allocations that can be taken out of the pool.
+    Allocating a Mutex uses an index, dropping the Mutex frees the index.
+    */
+    pub fn new(size: usize, indexes: IndexLoc) -> Result<Pool> {
+        let num_blocks = ceil(size, mem::size_of::<Block>());
+        if indexes > IndexLoc::max_value() / 2
+                || num_blocks > BlockLoc::max_value() as usize / 2 {
+            return Err(Error::InvalidSize)
         }
-    }
-
-    pub unsafe fn next_mut(&mut self, pool: &RawPool) -> Option<&mut Block> {
-        let block = self.block(pool);
-        let blocks = self.blocks();
-        if block + blocks == pool.heap_block {
-            None
-        } else {
-            assert!(block + blocks < pool.heap_block);
-            let ptr = self as *mut Block;
-            assert!((*ptr).blocks() != 0);
-            Some(&mut *ptr.offset(blocks as isize))
-        }
-    }
-
-    pub fn ty(&self) -> BlockType {
-        if self._a._blocks & BLOCK_HIGH_BIT == 0 {
-            BlockType::Free
-        } else {
-            BlockType::Full
-        }
-    }
-
-    pub unsafe fn as_free(&self) -> &Free {
-        assert_eq!(self.ty(), BlockType::Free);
-        let ptr: *const Free = mem::transmute(self as *const Block);
-        &*ptr
-    }
-
-    pub unsafe fn as_free_mut(&mut self) -> &mut Free {
-        assert_eq!(self.ty(), BlockType::Free);
-        let ptr: *mut Free = mem::transmute(self as *mut Block);
-        &mut *ptr
-    }
-
-    pub unsafe fn as_full(&self) -> &Full {
-        assert_eq!(self.ty(), BlockType::Full);
-        let ptr: *const Full = mem::transmute(self as *const Block);
-        &*ptr
-    }
-
-    pub unsafe fn as_full_mut(&mut self) -> &mut Full {
-        assert_eq!(self.ty(), BlockType::Full);
-        let ptr: *mut Full = mem::transmute(self as *mut Block);
-        &mut *ptr
-    }
-}
-
-impl Default for Block {
-    fn default() -> Block {
-        unsafe { mem::zeroed() }
-    }
-}
-
-
-// ##################################################
-// # Index
-
-/// Index provides a non-moving location in memory for userspace
-/// to reference. There is a limited number of indexes.
-#[repr(C, packed)]
-#[derive(Debug, Copy, Clone)]
-pub struct Index {
-    _block: BlockLoc,
-}
-
-impl Default for Index {
-    fn default() -> Index {
-        Index {_block: BLOCK_NULL}
-    }
-}
-
-impl Index {
-    /// get the block where the index is stored
-    pub fn block(&self) -> BlockLoc {
-        self._block
-    }
-
-    pub fn block_maybe(&self) -> Option<BlockLoc> {
-        if self._block == BLOCK_NULL {
-            None
-        } else {
-            Some(self._block)
-        }
-    }
-
-    /// get size of Index DATA in bytes
-    pub fn size(&self, pool: &RawPool) -> usize {
         unsafe {
-            pool.full(self.block()).blocks() as usize * mem::size_of::<Block>()
-                - mem::size_of::<Full>()
-        }
-    }
-}
-
-// ##################################################
-// # Full
-
-/// the Full struct represents data that has been allocated
-/// it contains only the size and a back-reference to the index
-/// that references it.
-/// It also contains the lock information inside it's index.
-#[repr(C, packed)]
-#[derive(Copy, Clone)]
-pub struct Full {
-    // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Free`
-    // The first bit of blocks is 1 for Full structs
-    _blocks: BlockLoc,        // size of this freed memory
-    _index: IndexLoc,         // data which contains the index and the lock information
-    // space after this (until block + blocks) is invalid
-}
-
-impl fmt::Debug for Full {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let isvalid = if self.is_valid() {" "} else {"!"};
-        write!(f, "Full{}{{blocks: {}, index: {}, locked: {}}}{}",
-               isvalid,
-               self._blocks & BLOCK_BITMAP,
-               self._index & BLOCK_BITMAP,
-               if self._index & INDEX_HIGH_BIT == INDEX_HIGH_BIT {1} else {0},
-               isvalid
-        )
-    }
-}
-
-impl Full {
-    /// get whether Full is locked
-    pub fn is_locked(&self) -> bool {
-        self.assert_valid();
-        self._index & INDEX_HIGH_BIT == INDEX_HIGH_BIT
-    }
-
-    /// set the lock on Full
-    pub fn set_lock(&mut self) {
-        self.assert_valid();
-        self._index |= INDEX_HIGH_BIT;
-    }
-
-    /// clear the lock on Full
-    pub fn clear_lock(&mut self) {
-        self.assert_valid();
-        self._index &= INDEX_BITMAP
-    }
-
-    fn blocks(&self) -> BlockLoc {
-        self.assert_valid();
-        self._blocks & BLOCK_BITMAP
-    }
-
-    fn index(&self) -> BlockLoc {
-        self.assert_valid();
-        self._index & INDEX_BITMAP
-    }
-
-    fn is_valid(&self) -> bool {
-        self._blocks & BLOCK_HIGH_BIT == BLOCK_HIGH_BIT && self._blocks & BLOCK_BITMAP != 0
-    }
-
-    fn assert_valid(&self) {
-        assert!(self.is_valid(), "{:?}", self);
-    }
-}
-
-// ##################################################
-// # RawPool
-
-/// `RawPool` is the private container and manager for all allocated
-/// and freed data. It handles the internals of allocation, deallocation
-/// and defragmentation.
-pub struct RawPool {
-    // blocks and statistics
-    pub _blocks: *mut Block,     // actual data
-    _blocks_len: BlockLoc,      // len of blocks
-    pub heap_block: BlockLoc,       // the current location of the "heap"
-    pub blocks_used: BlockLoc,       // total memory currently used
-
-    // indexes and statistics
-    pub _indexes: *mut Index,    // does not move and stores movable block location of data
-    _indexes_len: IndexLoc,     // len of indexes
-    last_index_used: IndexLoc,  // for speeding up finding indexes
-    indexes_used: IndexLoc,     // total number of indexes used
-
-    // freed data
-    pub freed_bins: FreedBins,           // freed bins
-
-}
-
-pub struct DisplayRawPool<'a> {
-    pool: &'a RawPool,
-}
-
-impl<'a> fmt::Display for DisplayRawPool<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let p = self.pool;
-        try!(write!(f, "RawPool {{\n"));
-        try!(write!(f, "  * index_ptr: {:?}\n", p._indexes));
-        try!(write!(f, "  * Indexes:  len: {}, used: {} remaining: {}\n",
-                   p.len_indexes(), p.indexes_used, p.indexes_remaining()));
-        for i in 0..p.len_indexes() {
-            let index = unsafe{p.index(i)};
-            if let Some(block) = index.block_maybe() {
-                try!(write!(f, "      {:<5}: {}\n", i, block));
+            let num_indexes = indexes;
+            let size_raw = mem::size_of::<RawPool>();
+            // allocate our memory
+            let align = mem::size_of::<usize>();
+            let pool = heap::allocate(size_raw, align);
+            if pool.is_null() {
+                return Err(Error::OutOfMemory);
             }
-        }
-        try!(write!(f, "  * blocks_ptr: {:?}\n", p._blocks));
-        try!(write!(f, "  * Block Data (len: {}, used: {} remain: {})\n",
-                     p.len_blocks(), p.blocks_used, p.blocks_remaining()));
-        unsafe {
-            let ptr = p as *const RawPool;
-            let mut block = (*ptr).first_block();
-            let first_block = match block {
-                Some(b) => b as *const Block as usize,
-                None => 0,
-            };
-            while let Some(b) = block {
-                try!(write!(f, "      {:<5}: {}\n",
-                           (b as usize - first_block) / mem::size_of::<Block>(),
-                           *b));
-                block = (*b).next_mut(&*ptr).map(|b| b as *mut Block);
+            let size_indexes = indexes as usize * mem::size_of::<Index>();
+            let indexes = heap::allocate(size_indexes, align);
+            if indexes.is_null() {
+                heap::deallocate(pool, size_raw, align);
+                return Err(Error::OutOfMemory);
             }
-        }
-        try!(write!(f, "      {:<5}: HEAP\n", p.heap_block));
-        try!(write!(f, "  * Freed Bins (len: {}):\n",
-                     p.freed_bins.len));
-        unsafe {
-            for b in 0..NUM_BINS {
-                try!(write!(f, "      [{}] bin {}: ", FreedBins::bin_repr(b), b));
-                let mut freed = p.freed_bins.bins[b as usize].root(p);
-                while let Some(fr) = freed {
-                    try!(write!(f, "{} ", fr.block()));
-                    freed = fr.next().map(|b| p.freed(b))
-                }
-                try!(write!(f, "\n"));
+            let size_blocks = num_blocks * mem::size_of::<Block>();
+            let blocks = heap::allocate(size_blocks, align);
+            if blocks.is_null() {
+                heap::deallocate(indexes, size_indexes, align);
+                heap::deallocate(pool, size_raw, align);
+                return Err(Error::OutOfMemory);
             }
-        }
-        write!(f, "}}")
-    }
-}
 
-impl RawPool {
-    pub fn display(&self) -> DisplayRawPool {
-        DisplayRawPool{pool: self}
+            let pool = pool as *mut RawPool;
+            let indexes = indexes as *mut Index;
+            let blocks = blocks as *mut Block;
+
+            // initialize our memory and return
+            *pool = RawPool::new(indexes, num_indexes, blocks, num_blocks as u16);
+            Ok(Pool::from_raw(pool))
+        }
     }
 
-    // Public unsafe API
-
-    /// get a new RawPool
+    /// get a Pool from a RawPool that you have initialized
     ///
-    /// This operation is unsafe because it is up to the user to ensure
-    /// that `indexes` and `blocks` do not get deallocated for the lifetime
-    /// of RawPool
-    pub unsafe fn new(indexes: *mut Index, indexes_len: IndexLoc,
-               blocks: *mut Block, blocks_len: BlockLoc)
-               -> RawPool {
-        // initialize all indexes to INDEX_NULL
-        let mut ptr = indexes;
-        for _ in 0..indexes_len {
-            *ptr = Index::default();
-            ptr = ptr.offset(1);
-        }
-
-        // initialize all blocks to 0
-        let mut ptr = blocks;
-        for _ in 0..blocks_len {
-            *ptr = Block::default();
-            ptr = ptr.offset(1);
-        }
-
-        RawPool {
-            _blocks: blocks,
-            _blocks_len: blocks_len,
-            heap_block: 0,
-            blocks_used: 0,
-
-            _indexes: indexes,
-            _indexes_len: indexes_len,
-            last_index_used: indexes_len - 1,
-            indexes_used: 0,
-
-            freed_bins: FreedBins::default(),
-        }
+    /// it is important that you call mem::forget on the Pool
+    /// and deallocate the underlying memory yourself
+    /// when you are done with it
+    pub unsafe fn from_raw(raw: *mut RawPool) -> Pool {
+        Pool { raw: raw }
     }
 
-    /// allocate data with a specified number of blocks,
-    /// including the half block required to store `Full` struct
-    pub unsafe fn alloc_index(&mut self, blocks: BlockLoc) -> Result<IndexLoc> {
-        if blocks == 0 {
-            return Err(Error::InvalidSize);
-        }
-        if self.blocks_remaining() < blocks {
-            return Err(Error::OutOfMemory);
-        }
-        let prev_used_index = self.last_index_used;
-        let i = try!(self.get_unused_index());
-        let block = if let Some(block) = self.use_freed(blocks) {
-            // we are reusing previously freed data
-            block
-        } else if (self.heap_block + blocks) <= self.len_blocks() {
-            // we are using data on the heap
-            let block = self.heap_block;
-            self.heap_block += blocks;
-            block
-        } else {
-            // we couldn't find enough contiguous memory (even though it exists)
-            // i.e. we are too fragmented
-            self.last_index_used = prev_used_index;
-            return Err(Error::Fragmented)
-        };
-        // set the index data
-        {
-            let index = self.index_mut(i);
-            index._block = block
-        }
-        // set the full data in the block
-        {
-            let full = self.full_mut(block);
-            full._blocks = blocks | BLOCK_HIGH_BIT;
-            full._index = i;  // starts unlocked
-        }
-        self.indexes_used += 1;
-        self.blocks_used += blocks;
-        Ok(i)
-    }
-
-    /// dealoc an index from the pool, this WILL corrupt any data that was there
-    pub unsafe fn dealloc_index(&mut self, i: IndexLoc) {
-        // get the size and location from the Index and clear it
-        let block = self.index(i).block();
-        *self.index_mut(i) = Index::default();
-
-        // start setting up freed
-        let freed = self.freed_mut(block) as *mut Free;
-        (*freed)._blocks &= BLOCK_BITMAP;  // set first bit to 0, needed to read blocks()
-        let blocks = (*freed).blocks();
-
-        // check if the freed is actually at the end of allocated heap, if so
-        // just move the heap back
-        if self.heap_block - blocks == block {
-            self.heap_block = block;
-        } else {
-            assert!(block < self.heap_block - blocks);
-            (*freed)._block = block;
-            (*freed)._next = BLOCK_NULL;
-            let selfptr = self as *mut RawPool;
-            (*selfptr).freed_bins.insert(self, &mut *freed);
-        }
-
-        // statistics cleanup
-        self.indexes_used -= 1;
-        self.blocks_used -= blocks;
-    }
-    // /// combine all contiguous freed blocks together.
-    pub unsafe fn clean(&mut self) {
-        #[allow(unused_variables)]
-        fn full_fn(pool: &mut RawPool, last_freed: Option<*mut Free>, full: &mut Full)
-                   -> Option<*mut Free> {None}
-        utils::base_clean(self, &full_fn);
-    }
-
-    pub unsafe fn defrag(&mut self) {
-        /// this is the function for handling when Full values are found
-        /// it moves them backwards if they are unlocked
-        #[allow(clone_on_copy)]  // we want to be explicity that we are copying
-        fn full_fn(pool: &mut RawPool, last_freed: Option<*mut Free>, full: &mut Full)
-                   -> Option<*mut Free> {
-            unsafe {
-                let poolptr = pool as *mut RawPool;
-                match last_freed {
-                    Some(ref free) => if full.is_locked() {
-                        None  // locked full value, can't move
-                    } else {
-                        // found an unlocked full value and the last value is free -- move it!
-                        // moving is surprisingly simple because:
-                        //  - the free.blocks does not change, so it does not change bins
-                        //  - the free.prev/next do not change
-                        //  - only the locations of full and free change, requiring their
-                        //      data, and the items pointing at them, to be updated
-                        println!("### Moving Backwards:\n{}", pool.display());
-                        let i = full.index();
-                        let blocks = full.blocks();
-                        println!("blocks={}", blocks);
-                        let mut free_tmp = (**free).clone();
-                        println!("before tmp: {:?}", free_tmp);
-                        let fullptr = full as *mut Full as *mut Block;
-
-                        // perform the move of the data
-                        ptr::copy(fullptr, (*free) as *mut Block, blocks as usize);
-                        println!("after  tmp: {:?}", free_tmp);
-
-                        // Note: don't use free, full or fullptr after this
-
-                        // full's data was already copied (blocks + index), only need
-                        // to update the static Index's data
-                        (*poolptr).index_mut(i)._block = free_tmp.block();
-
-                        // update the free block's location and get it
-                        free_tmp._block += blocks;
-
-                        // update the items pointing TO free
-                        match free_tmp.prev() {
-                            Some(p) => (*poolptr).freed_mut(p)._next = free_tmp.block(),
-                            None => {
-                                // the previous item is a bin, so we have to
-                                // do surgery in the freed bins
-                                let freed_bins = &mut (*poolptr).freed_bins;
-                                let bin = freed_bins.get_insert_bin(
-                                    free_tmp.blocks());
-                                freed_bins.bins[bin as usize]._root = free_tmp.block();
-                            }
-                        }
-                        if let Some(n) = free_tmp.next() {
-                            (*poolptr).freed_mut(n)._prev = free_tmp.block();
-                        }
-
-                        // actually store the new free in pool._blocks
-                        let new_free_loc = (*poolptr).freed_mut(free_tmp._block);
-                        *new_free_loc = free_tmp;
-
-                        println!("new free: {:?}", new_free_loc);
-                        // the new_free is the last_freed for the next cycle
-                        Some(new_free_loc as *mut Free)
-                    },
-                    None => None,  // the previous value is not free, can't move
-                }
+    /// attempt to allocate memory of type T, returning `Result<Mutex<T>>`
+    ///
+    /// If `Ok(Mutex<T>)`, the memory will have been initialized to `T.default`
+    /// and can be unlocked and used by calling `Mutex.try_lock`
+    ///
+    /// For error results, see `Error`
+    pub fn alloc<T: Default>(&self) -> Result<Mutex<T>> {
+        unsafe {
+            let actual_size: usize = mem::size_of::<Full>() + mem::size_of::<T>();
+            let blocks = ceil(actual_size, mem::size_of::<Block>());
+            if blocks > (*self.raw).len_blocks() as usize {
+                return Err(Error::InvalidSize);
             }
-        }
-        utils::base_clean(self, &full_fn);
-    }
-
-    // public safe API
-
-    /// raw pool size in blocks
-    pub fn len_blocks(&self) -> BlockLoc {
-        self._blocks_len
-    }
-
-    pub fn len_indexes(&self) -> BlockLoc {
-        self._indexes_len
-    }
-
-    /// raw pool size in bytes
-    pub fn size(&self) -> usize {
-        self.len_blocks() as usize * mem::size_of::<Block>()
-    }
-
-    /// raw blocks remaining (fragmented or not)
-    pub fn blocks_remaining(&self) -> BlockLoc {
-        self.len_blocks() - self.blocks_used
-    }
-
-    /// raw bytes remaining (fragmented or not)
-    pub fn bytes_remaining(&self) -> usize {
-        self.blocks_remaining() as usize * mem::size_of::<Block>()
-    }
-
-    pub fn indexes_remaining(&self) -> IndexLoc {
-        self.len_indexes() - self.indexes_used
-    }
-
-    /// get the index
-    #[allow(should_implement_trait)] 
-    pub unsafe fn index(&self, i: IndexLoc) -> &Index {
-        &*self._indexes.offset(i as isize)
-    }
-
-    // semi-private unsafe API
-
-    pub unsafe fn index_mut(&self, i: IndexLoc) -> &mut Index {
-        &mut *self._indexes.offset(i as isize)
-    }
-
-    /// get the raw ptr to the data at block
-    pub unsafe fn data(&self, block: BlockLoc) -> *mut u8 {
-        let p = self._blocks.offset(block as isize) as *mut u8;
-        p.offset(mem::size_of::<Full>() as isize)
-    }
-
-    /// get the pointer to the first block
-    pub unsafe fn first_block(&self) -> Option<*mut Block> {
-        if self.heap_block == 0 {
-            None
-        } else {
-            Some(self._blocks)
+            let i = try!((*self.raw).alloc_index(blocks as u16));
+            let index = (*self.raw).index(i);
+            let mut p = (*self.raw).data(index.block()) as *mut T;
+            *p = T::default();
+            Ok(Mutex{index: i, pool: self, _type: PhantomData})
         }
     }
 
-    pub unsafe fn block(&self, block: BlockLoc) -> *mut Block {
-        self._blocks.offset(block as isize)
-    }
-
-    /// read the block as a Free block
-    pub unsafe fn freed(&self, block: BlockLoc) -> &Free {
-        &*(self._blocks.offset(block as isize) as *const Free)
-    }
-
-    /// mut the block as a Free block
-    pub unsafe fn freed_mut(&self, block: BlockLoc) -> &mut Free {
-        &mut *(self._blocks.offset(block as isize) as *mut Free)
-    }
-
-    /// read the block as a Full block
-    pub unsafe fn full(&self, block: BlockLoc) -> &Full {
-        &*(self._blocks.offset(block as isize) as *const Full)
-    }
-
-    /// mut the block as a Full block
-    pub unsafe fn full_mut(&self, block: BlockLoc) -> &mut Full {
-        &mut *(self._blocks.offset(block as isize) as *mut Full)
-    }
-
-    // private API
-
-    /// get an unused index
-    fn get_unused_index(&mut self) -> Result<IndexLoc> {
-        // TODO: this is currently pretty slow, maybe cache freed indexes?
-        let mut i = (self.last_index_used + 1) % self.len_indexes();
-        while i != self.last_index_used {
-            if unsafe{self.index(i)._block} == BLOCK_NULL {
-                self.last_index_used = i;
-                return Ok(i);
+    /// attempt to allocate a slice of memory with `len` of `T` elements,
+    /// returning `Result<SliceMutex<T>>`
+    ///
+    /// If `Ok(SliceMutex<T>)`, all elements of the slice will have been initialized to `T.default`
+    /// and can be unlocked and used by calling `Mutex.try_lock`
+    ///
+    /// For error results, see `Error`
+    pub fn alloc_slice<T: Default>(&self, len: BlockLoc) -> Result<SliceMutex<T>> {
+        unsafe {
+            let actual_size: usize = mem::size_of::<Full>() + mem::size_of::<T>() * len as usize;
+            let blocks = ceil(actual_size, mem::size_of::<Block>());
+            if blocks > (*self.raw).len_blocks() as usize {
+                return Err(Error::InvalidSize);
             }
-            i = (i + 1) % self.len_indexes();
-        }
-        Err(Error::OutOfIndexes)
-    }
-
-    /// get a freed value from the freed bins
-    unsafe fn use_freed(&mut self, blocks: BlockLoc) -> Option<BlockLoc> {
-        let selfptr = self as *mut RawPool;
-        match (*selfptr).freed_bins.pop(self, blocks) {
-            Some(f) => Some(f),
-            None => None,
+            let i = try!((*self.raw).alloc_index(blocks as u16));
+            let index = (*self.raw).index(i);
+            let mut p = (*self.raw).data(index.block()) as *mut T;
+            for _ in 0..len {
+                *p = T::default();
+                p = p.offset(1);
+            }
+            Ok(SliceMutex{index: i, len: len, pool: self, _type: PhantomData})
         }
     }
 }
 
 // ##################################################
-// # Internal Tests
+// # Standard Mutex
 
-#[test]
-fn test_basic() {
-    // assert that our bitmap is as expected
-    let highbit = 1 << ((mem::size_of::<BlockLoc>() * 8) - 1);
-    assert_eq!(BLOCK_BITMAP, !highbit, "{:b} != {:b}", BLOCK_BITMAP, !highbit);
-    assert_eq!(BLOCK_HIGH_BIT, highbit, "{:b} != {:b}", BLOCK_HIGH_BIT, highbit);
+/**
+all allocated data is represented as a Mutex. When the data
+is unlocked, the underlying `Pool` is free to move it and
+reduce fragmentation
 
-    // assert that Full.blocks() cancels out the high bit
-    let expected = highbit ^ BlockLoc::max_value();
-    let f = Full {
-        _blocks: BLOCK_NULL,
-        _index: 0,
-    };
-    assert_eq!(f.blocks(), expected);
+See https://doc.rust-lang.org/std/sync/struct.Mutex.html for
+more information on the general API
+*/
+pub struct Mutex<'a, T> {
+    index: IndexLoc,
+    pool: &'a Pool,
+    _type: PhantomData<T>,
+}
 
-    // assert that Free.blocks() DOESN'T cancel out the high bit (not necessary)
-    let mut f = Free {
-        _blocks: BLOCK_BITMAP,
-        _block: 0,
-        _prev: 0,
-        _next: 0,
-    };
-    assert_eq!(f.blocks(), BLOCK_BITMAP);
-    f._blocks = 42;
-    assert_eq!(f.blocks(), 42);
+impl<'a, T> Mutex<'a, T> {
+    /// try to obain a lock on the memory
+    pub fn try_lock(&'a self) -> TryLockResult<MutexGuard<T>> {
+        unsafe {
+            let pool = &*self.pool.raw;
+            let block = pool.index(self.index).block();
+            let full = pool.full_mut(block);
+            if full.is_locked() {
+                Err(TryLockError::WouldBlock)
+            } else {
+                full.set_lock();
+                assert!(full.is_locked());
+                Ok(MutexGuard{__lock: self})
+            }
+        }
+    }
+}
+
+
+/// represents memory which can be used.
+/// dropping this unlocks the memory and allows it to be
+/// defragmentated.
+pub struct MutexGuard<'a, T: 'a> {
+    // Maybe remove this 'a?
+    __lock: &'a Mutex<'a, T>,
+}
+
+impl<'a, T: 'a> Deref for MutexGuard<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        unsafe {
+            let pool = &*self.__lock.pool.raw;
+            let index = &pool.index(self.__lock.index);
+            &*(pool.data(index.block()) as *const T)
+        }
+    }
+}
+
+impl<'a, T: 'a> DerefMut for MutexGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe {
+            let pool = &*self.__lock.pool.raw;
+            let index = &pool.index(self.__lock.index);
+            &mut *(pool.data(index.block()) as *mut T)
+        }
+    }
+}
+
+// ##################################################
+// # Slice Mutex
+
+/// same as `Mutex` except wrapps a slice
+///
+/// see: https://doc.rust-lang.org/std/slice/
+pub struct SliceMutex<'a, T> {
+    index: IndexLoc,
+    pool: &'a Pool,
+    len: BlockLoc,
+    _type: PhantomData<T>,
+}
+
+impl<'a, T> SliceMutex<'a, T> {
+    /// see `Mutex.try_lock`
+    pub fn try_lock(&'a self) -> TryLockResult<SliceMutexGuard<T>> {
+        unsafe {
+            let pool = &*self.pool.raw;
+            let block = pool.index(self.index).block();
+            let full = pool.full_mut(block);
+            if full.is_locked() {
+                Err(TryLockError::WouldBlock)
+            } else {
+                full.set_lock();
+                assert!(full.is_locked());
+                Ok(SliceMutexGuard{__lock: self})
+            }
+        }
+    }
+}
+
+pub struct SliceMutexGuard<'a, T: 'a> {
+    __lock: &'a SliceMutex<'a, T>,
+}
+
+#[allow(should_implement_trait)]  // TODO: is it possible to implement?
+impl<'a, T: 'a> SliceMutexGuard<'a, T> {
+    /// rust's type system does not allow Deref to implement `&[T]`,
+    /// so you must call `deref` explicitly to use your slice
+    pub fn deref(&mut self) -> &[T] {
+        unsafe {
+            let pool = &*self.__lock.pool.raw;
+            let index = &pool.index(self.__lock.index);
+            let t: *const T = mem::transmute(pool.data(index.block()));
+            slice::from_raw_parts(t, self.__lock.len as usize)
+        }
+    }
+
+    /// rust's type system does not allow Deref to implement `&mut [T]`,
+    /// so you must call `deref_mut` explicitly to use your slice
+    pub fn deref_mut(&mut self) -> &mut [T] {
+        unsafe {
+            let pool = &*self.__lock.pool.raw;
+            let index = &pool.index(self.__lock.index);
+            let t: *mut T = mem::transmute(pool.data(index.block()));
+            slice::from_raw_parts_mut(t, self.__lock.len as usize)
+        }
+    }
 }
 
 #[test]
-/// test using raw indexes
-fn test_indexes() {
-    unsafe {
-        let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = ([Index::default(); 256], mem::zeroed());
-        let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
-        let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
+fn test_alloc() {
+    let pool = Pool::new(4096, 256).unwrap();
+    let expected = 0x01010101;
 
-        let mut pool = RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc);
+    let alloced = pool.alloc::<u32>();
+    let unwrapped_alloc = alloced.unwrap();
+    let locked = unwrapped_alloc.try_lock();
+    let mut unwrapped_locked = locked.unwrap();
+    {
+        let rmut = unwrapped_locked.deref_mut();
+        *rmut = expected;
+    }
+    assert_eq!(unwrapped_locked.deref(), &expected);
 
-        assert_eq!(pool.get_unused_index().unwrap(), 0);
-        assert_eq!(pool.get_unused_index().unwrap(), 1);
-        assert_eq!(pool.get_unused_index().unwrap(), 2);
-        let mut times_allocated = 3;
-        let mut used_indexes = 0;
-        let mut blocks_allocated = 0;
+    let expected2 = -1000;
+    let alloced2 = pool.alloc::<i64>();
+    let unwrapped_alloc2 = alloced2.unwrap();
+    let locked2 = unwrapped_alloc2.try_lock();
+    let mut unwrapped_locked2 = locked2.unwrap();
+    {
+        let rmut = unwrapped_locked2.deref_mut();
+        *rmut = expected2;
+    }
+    assert_eq!(unwrapped_locked2.deref(), &expected2);
+}
 
-        // allocate an index
-        println!("allocate 1");
-        assert_eq!(pool.freed_bins.len, 0);
-        let i = pool.alloc_index(4).unwrap();
-        times_allocated += 1;
-        assert_eq!(i, times_allocated - 1);
-        let block;
+#[test]
+fn test_alloc_slice() {
+    let pool = Pool::new(4096 * mem::size_of::<Block>(), 256).unwrap();
+
+    {
+        let alloced = pool.alloc_slice::<u16>(10000);
+        let unwrapped_alloc = alloced.unwrap();
+        let locked = unwrapped_alloc.try_lock();
+        let mut unwrapped_locked = locked.unwrap();
         {
-            let index = (*(&pool as *const RawPool)).index(i);
-            assert_eq!(index._block, 0);
-            block = index.block();
-            assert_eq!(pool.full(index.block()).blocks(), 4);
-            assert_eq!(pool.full(index.block())._blocks, BLOCK_HIGH_BIT | 4);
+            let rmut = unwrapped_locked.deref_mut();
+            for n in 0..10000 {
+                assert_eq!(rmut[n], 0);
+                rmut[n] = n as u16;
+            }
         }
 
-        // allocate another index and then free it, to show that the heap
-        // just automatically get's reclaimed
-        assert_eq!(pool.freed_bins.len, 0);
-        let tmp_i = pool.alloc_index(100).unwrap();
-        times_allocated += 1;
-        pool.dealloc_index(tmp_i);
-        assert_eq!(pool.freed_bins.len, 0);
-        assert_eq!(pool.heap_block, 4);
-        assert_eq!(pool.blocks_used, 4);
-
-        // allocate an index so that the deallocated one doesn't
-        // go back to the heap
-        let i_a = pool.alloc_index(1).unwrap();
-        times_allocated += 1;
-        used_indexes += 1;
-        blocks_allocated += 1;
-        assert_eq!(i_a, times_allocated - 1);
-
-        // deallocate an index
-        println!("free 1");
-        assert_eq!(pool.freed_bins.len, 0);
-        pool.dealloc_index(i);
-        {
-            println!("deallocated 1");
-            assert_eq!(pool.index(i)._block, BLOCK_NULL);
-
-            let freed = pool.freed(block);
-            assert_eq!(freed.blocks(), 4);
-            assert_eq!(freed._blocks, 4);
-            assert_eq!(freed.prev(), None);
-            assert_eq!(freed.next(), None);
-            let bin = pool.freed_bins.get_insert_bin(4);
-            assert_eq!(pool.freed_bins.bins[bin as usize].root(&pool).unwrap().block(), block);
+        let r = unwrapped_locked.deref_mut();
+        for n in 0..10000 {
+            assert_eq!(r[n], n as u16);
         }
-
-        // allocate another index (that doesn't fit in the first)
-        println!("allocate 2");
-        let i2 = pool.alloc_index(8).unwrap();
-        times_allocated += 1;
-        used_indexes += 1;
-        blocks_allocated += 8;
-        assert_eq!(i2, times_allocated - 1);
-        {
-            let index2 = (*(&pool as *const RawPool)).index(i2);
-            assert_eq!(index2._block, 5);
-            assert_eq!(pool.full(index2.block()).blocks(), 8);
-            assert_eq!(pool.full(index2.block())._blocks, BLOCK_HIGH_BIT | 8);
-        }
-
-        // allocate a 3rd index (that does fit in the first)
-        println!("allocate 3");
-        let i3 = pool.alloc_index(2).unwrap();
-        assert_eq!(i3, 7);
-        times_allocated += 1;
-        used_indexes += 1;
-        blocks_allocated += 2;
-        assert_eq!(i3, times_allocated - 1);
-        {
-            let index3 = (*(&pool as *const RawPool)).index(i3);
-            assert_eq!(index3._block, 0);
-            assert_eq!(pool.full(index3.block()).blocks(), 2);
-            assert_eq!(pool.full(index3.block())._blocks, BLOCK_HIGH_BIT | 2);
-        }
-        // tests related to the fact that i3 just overwrote the freed item
-        let bin = pool.freed_bins.get_insert_bin(2);
-        let free_block = pool.freed_bins.bins[bin as usize].root(&pool).unwrap().block();
-        assert_eq!(free_block, 2);
-        {
-            // free1 has moved
-            let free = pool.freed(free_block);
-            assert_eq!(free.blocks(), 2);
-            assert_eq!(free.prev(), None);
-            assert_eq!(free.next(), None);
-        }
-
-        // allocate 3 indexes then free the first 2
-        // then run the freeing clean
-        assert_eq!(i3, 7);
-        let allocs = (
-            pool.alloc_index(4).unwrap(),
-            pool.alloc_index(4).unwrap(),
-            pool.alloc_index(4).unwrap());
-
-        times_allocated += 3;
-        assert_eq!(allocs.2, times_allocated - 1);
-
-        used_indexes += 1;
-        blocks_allocated += 4;
-        let free_block = pool.index(allocs.0).block();
-        pool.dealloc_index(allocs.0);
-        pool.dealloc_index(allocs.1);
-
-        println!("cleaning freed");
-        println!("{}", pool.display());
-        pool.clean();
-        {
-            let free = pool.freed(free_block);
-            assert_eq!(free.blocks(), 8);
-        }
-        pool.clean();
-        pool.clean();
-
-        // defrag and make sure everything looks like how one would expect it
-        println!("defragging");
-        println!("{}", pool.display());
-        pool.defrag();
-
-        println!("done defragging");
-        println!("{}", pool.display());
-        assert_eq!(pool.freed_bins.len, 0);
-        assert_eq!(pool.blocks_used, blocks_allocated);
-        assert_eq!(pool.indexes_used, used_indexes);
     }
 }
