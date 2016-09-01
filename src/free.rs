@@ -15,10 +15,10 @@ use super::pool::{RawPool, Block, BlockType};
 pub struct Free {
     // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `Full._blocks`
     // The first bit of `_blocks` is always 0 for Free structs
-    pub _blocks: block,        // size of this freed memory
-    pub _block: block,          // block location of this struct
-    pub _prev: block,          // location of previous freed memory
-    pub _next: block,          // location of next freed memory
+    pub _blocks: BlockLoc,        // size of this freed memory
+    pub _block: BlockLoc,          // block location of this struct
+    pub _prev: BlockLoc,          // location of previous freed memory
+    pub _next: BlockLoc,          // location of next freed memory
     // data after this (until block + blocks) is invalid
 }
 
@@ -59,19 +59,19 @@ impl Free {
     // public accessors (public for tests)
 
     /// block accessor
-    pub fn block(&self) -> block {
+    pub fn block(&self) -> BlockLoc {
         self.assert_valid();
         self._block
     }
 
     /// blocks accessor, handling any bitmaps
-    pub fn blocks(&self) -> block {
+    pub fn blocks(&self) -> BlockLoc {
         self.assert_valid();
         self._blocks
     }
 
     /// prev accessor, handling any bitmaps
-    pub fn prev(&self) -> Option<block> {
+    pub fn prev(&self) -> Option<BlockLoc> {
         self.assert_valid();
         if self._prev == BLOCK_NULL {
             None
@@ -81,7 +81,7 @@ impl Free {
     }
 
     /// next accessor, handling any bitmaps
-    pub fn next(&self) -> Option<block> {
+    pub fn next(&self) -> Option<BlockLoc> {
         self.assert_valid();
         if self._next == BLOCK_NULL {
             None
@@ -135,7 +135,7 @@ impl Free {
     pub unsafe fn remove(&mut self, pool: &mut RawPool) {
         self.assert_valid();
         /// convinience function for this method only
-        unsafe fn get_freed<'a>(pool: &'a mut RawPool, block: Option<block>) -> Option<&'a mut Free> {
+        unsafe fn get_freed<'a>(pool: &'a mut RawPool, block: Option<BlockLoc>) -> Option<&'a mut Free> {
             match block {
                 Some(b) => {
                     assert!(b < pool.len_blocks() - 1);
@@ -184,11 +184,11 @@ impl Free {
 // ##################################################
 // # Freed Bins and Root
 
-/// a FreedRoot stores the beginning of the linked list
+/// `FreedRoot' stores the beginning of the linked list
 /// and keeps track of statistics
 #[repr(C, packed)]
 pub struct FreedRoot {
-    pub _root: block,
+    pub _root: BlockLoc,
 }
 
 impl Default for FreedRoot {
@@ -229,18 +229,17 @@ impl FreedRoot {
 
 pub const NUM_BINS: u8 = 7;
 
-/// the FreedBins provide simple and fast access to freed data
-/// FreedBins is a private struct so all accessors are pub
+/// `FreedBins` provide simple and fast access to freed data
 #[derive(Default)]
 pub struct FreedBins {
-    pub len: block,
+    pub len: BlockLoc,
     pub bins: [FreedRoot; NUM_BINS as usize],
 }
 
 impl FreedBins {
     /// get the bin that would be used when
     /// inserting a Free value
-    pub fn get_insert_bin(&self, blocks: block) -> u8 {
+    pub fn get_insert_bin(&self, blocks: BlockLoc) -> u8 {
         match blocks {
             1   ...3     => 0,
             4   ...15    => 1,
@@ -279,7 +278,7 @@ impl FreedBins {
     /// bins. It should be assumed that none of the data at the `block` output location
     /// is valid after this operation is performed.
     /// This is the only method that RawPool uses to re-use freed blocks
-    pub unsafe fn pop(&mut self, pool: &mut RawPool, blocks: block) -> Option<block>{
+    pub unsafe fn pop(&mut self, pool: &mut RawPool, blocks: BlockLoc) -> Option<BlockLoc>{
         assert!(blocks != 0);
         if self.len == 0 {
             return None;
@@ -332,7 +331,7 @@ impl FreedBins {
     /// After perforing this operation, the information stored in `freed` is completely invalid.
     /// This includes it's blocks-size, block-location as well as `prev` and `next` fields. It
     /// is the responsibility of the user to set the information to be valid.
-    unsafe fn consume_partof(&mut self, pool: &mut RawPool, freed: &mut Free, blocks: block) {
+    unsafe fn consume_partof(&mut self, pool: &mut RawPool, freed: &mut Free, blocks: BlockLoc) {
         // all unsafe operations are safe because we know that we are
         // never changing more than one freed block at a time
         let old_blocks = freed.blocks();

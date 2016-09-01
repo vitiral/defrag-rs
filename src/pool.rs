@@ -51,13 +51,13 @@ impl fmt::Display for Block {
 }
 
 impl Block {
-    pub fn blocks(&self) -> block {
+    pub fn blocks(&self) -> BlockLoc {
         let out = self._a._blocks & BLOCK_BITMAP;
         assert!(out != 0);
         out
     }
 
-    pub unsafe fn block(&self, pool: &RawPool) -> block {
+    pub unsafe fn block(&self, pool: &RawPool) -> BlockLoc {
         match self.ty() {
             BlockType::Free => self.as_free().block(),
             BlockType::Full => pool.index(self.as_full().index()).block(),
@@ -125,7 +125,7 @@ impl Default for Block {
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
 pub struct Index {
-    _block: block,
+    _block: BlockLoc,
 }
 
 impl Default for Index {
@@ -136,11 +136,11 @@ impl Default for Index {
 
 impl Index {
     /// get the block where the index is stored
-    pub fn block(&self) -> block {
+    pub fn block(&self) -> BlockLoc {
         self._block
     }
 
-    pub fn block_maybe(&self) -> Option<block> {
+    pub fn block_maybe(&self) -> Option<BlockLoc> {
         if self._block == BLOCK_NULL {
             None
         } else {
@@ -169,8 +169,8 @@ impl Index {
 pub struct Full {
     // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `_blocks` IN `Free`
     // The first bit of blocks is 1 for Full structs
-    _blocks: block,        // size of this freed memory
-    _index: index,         // data which contains the index and the lock information
+    _blocks: BlockLoc,        // size of this freed memory
+    _index: IndexLoc,         // data which contains the index and the lock information
     // space after this (until block + blocks) is invalid
 }
 
@@ -206,12 +206,12 @@ impl Full {
         self._index &= INDEX_BITMAP
     }
 
-    fn blocks(&self) -> block {
+    fn blocks(&self) -> BlockLoc {
         self.assert_valid();
         self._blocks & BLOCK_BITMAP
     }
 
-    fn index(&self) -> block {
+    fn index(&self) -> BlockLoc {
         self.assert_valid();
         self._index & INDEX_BITMAP
     }
@@ -228,21 +228,21 @@ impl Full {
 // ##################################################
 // # RawPool
 
-/// The RawPool is the private container and manager for all allocated
+/// `RawPool` is the private container and manager for all allocated
 /// and freed data. It handles the internals of allocation, deallocation
 /// and defragmentation.
 pub struct RawPool {
     // blocks and statistics
     _blocks: *mut Block,     // actual data
-    _blocks_len: block,      // len of blocks
-    pub heap_block: block,       // the current location of the "heap"
-    pub blocks_used: block,       // total memory currently used
+    _blocks_len: BlockLoc,      // len of blocks
+    pub heap_block: BlockLoc,       // the current location of the "heap"
+    pub blocks_used: BlockLoc,       // total memory currently used
 
     // indexes and statistics
     _indexes: *mut Index,    // does not move and stores movable block location of data
-    _indexes_len: index,     // len of indexes
-    last_index_used: index,  // for speeding up finding indexes
-    indexes_used: index,     // total number of indexes used
+    _indexes_len: IndexLoc,     // len of indexes
+    last_index_used: IndexLoc,  // for speeding up finding indexes
+    indexes_used: IndexLoc,     // total number of indexes used
 
     // freed data
     pub freed_bins: FreedBins,           // freed bins
@@ -316,13 +316,13 @@ impl RawPool {
     /// This operation is unsafe because it is up to the user to ensure
     /// that `indexes` and `blocks` do not get deallocated for the lifetime
     /// of RawPool
-    pub unsafe fn new(indexes: *mut Index, indexes_len: index,
-               blocks: *mut Block, blocks_len: block)
+    pub unsafe fn new(indexes: *mut Index, indexes_len: IndexLoc,
+               blocks: *mut Block, blocks_len: BlockLoc)
                -> RawPool {
-        if indexes_len > index::max_value() / 2 {
+        if indexes_len > IndexLoc::max_value() / 2 {
             panic!("indexes_len too large");
         }
-        if blocks_len > block::max_value() / 2 {
+        if blocks_len > BlockLoc::max_value() / 2 {
             panic!("blocks_len too large");
         }
         // initialize all indexes to INDEX_NULL
@@ -356,7 +356,7 @@ impl RawPool {
 
     /// allocate data with a specified number of blocks,
     /// including the half block required to store `Full` struct
-    pub unsafe fn alloc_index(&mut self, blocks: block) -> Result<index> {
+    pub unsafe fn alloc_index(&mut self, blocks: BlockLoc) -> Result<IndexLoc> {
         if blocks == 0 {
             return Err(Error::InvalidSize);
         }
@@ -396,7 +396,7 @@ impl RawPool {
     }
 
     /// dealoc an index from the pool, this WILL corrupt any data that was there
-    pub unsafe fn dealloc_index(&mut self, i: index) {
+    pub unsafe fn dealloc_index(&mut self, i: IndexLoc) {
         // get the size and location from the Index and clear it
         let block = self.index(i).block();
         *self.index_mut(i) = Index::default();
@@ -504,11 +504,11 @@ impl RawPool {
     // public safe API
 
     /// raw pool size in blocks
-    pub fn len_blocks(&self) -> block {
+    pub fn len_blocks(&self) -> BlockLoc {
         self._blocks_len
     }
 
-    pub fn len_indexes(&self) -> block {
+    pub fn len_indexes(&self) -> BlockLoc {
         self._indexes_len
     }
 
@@ -518,7 +518,7 @@ impl RawPool {
     }
 
     /// raw blocks remaining (fragmented or not)
-    pub fn blocks_remaining(&self) -> block {
+    pub fn blocks_remaining(&self) -> BlockLoc {
         self.len_blocks() - self.blocks_used
     }
 
@@ -527,25 +527,25 @@ impl RawPool {
         self.blocks_remaining() as usize * mem::size_of::<Block>()
     }
 
-    pub fn indexes_remaining(&self) -> index {
+    pub fn indexes_remaining(&self) -> IndexLoc {
         self.len_indexes() - self.indexes_used
     }
 
     /// get the index
-    pub unsafe fn index(&self, i: index) -> &Index {
+    pub unsafe fn index(&self, i: IndexLoc) -> &Index {
         let ptr = self._indexes.offset(i as isize);
         mem::transmute(ptr)
     }
 
     // semi-private unsafe API
 
-    pub unsafe fn index_mut(&self, i: index) -> &mut Index {
+    pub unsafe fn index_mut(&self, i: IndexLoc) -> &mut Index {
         let ptr = self._indexes.offset(i as isize);
         mem::transmute(ptr)
     }
 
     /// get the raw ptr to the data at block
-    pub unsafe fn ptr(&self, block: block) -> *const u8 {
+    pub unsafe fn ptr(&self, block: BlockLoc) -> *const u8 {
         let free = self.freed(block);
         let mut ptr: *const u8 = mem::transmute(free);
         ptr = ptr.offset(mem::size_of::<Full>() as isize);
@@ -561,30 +561,30 @@ impl RawPool {
         }
     }
 
-    pub unsafe fn block(&self, block: block) -> *mut Block {
+    pub unsafe fn block(&self, block: BlockLoc) -> *mut Block {
         self._blocks.offset(block as isize)
     }
 
     /// read the block as a Free block
-    pub unsafe fn freed(&self, block: block) -> &Free {
+    pub unsafe fn freed(&self, block: BlockLoc) -> &Free {
         let ptr = self._blocks.offset(block as isize);
         mem::transmute(ptr)
     }
 
     /// mut the block as a Free block
-    pub unsafe fn freed_mut(&self, block: block) -> &mut Free {
+    pub unsafe fn freed_mut(&self, block: BlockLoc) -> &mut Free {
         let ptr = self._blocks.offset(block as isize);
         mem::transmute(ptr)
     }
 
     /// read the block as a Full block
-    pub unsafe fn full(&self, block: block) -> &Full {
+    pub unsafe fn full(&self, block: BlockLoc) -> &Full {
         let ptr = self._blocks.offset(block as isize);
         mem::transmute(ptr)
     }
 
     /// mut the block as a Full block
-    pub unsafe fn full_mut(&self, block: block) -> &mut Full {
+    pub unsafe fn full_mut(&self, block: BlockLoc) -> &mut Full {
         let ptr = self._blocks.offset(block as isize);
         mem::transmute(ptr)
     }
@@ -592,7 +592,7 @@ impl RawPool {
     // private API
 
     /// get an unused index
-    fn get_unused_index(&mut self) -> Result<index> {
+    fn get_unused_index(&mut self) -> Result<IndexLoc> {
         // TODO: this is currently pretty slow, maybe cache freed indexes?
         let mut i = (self.last_index_used + 1) % self.len_indexes();
         while i != self.last_index_used {
@@ -602,11 +602,11 @@ impl RawPool {
             }
             i = (i + 1) % self.len_indexes();
         }
-        return Err(Error::OutOfIndexes);
+        Err(Error::OutOfIndexes)
     }
 
     /// get a freed value from the freed bins
-    unsafe fn use_freed(&mut self, blocks: block) -> Option<block> {
+    unsafe fn use_freed(&mut self, blocks: BlockLoc) -> Option<BlockLoc> {
         let selfptr = self as *mut RawPool;
         match (*selfptr).freed_bins.pop(self, blocks) {
             Some(f) => Some(f),
@@ -621,12 +621,12 @@ impl RawPool {
 #[test]
 fn test_basic() {
     // assert that our bitmap is as expected
-    let highbit = 1 << ((mem::size_of::<block>() * 8) - 1);
+    let highbit = 1 << ((mem::size_of::<BlockLoc>() * 8) - 1);
     assert_eq!(BLOCK_BITMAP, !highbit, "{:b} != {:b}", BLOCK_BITMAP, !highbit);
     assert_eq!(BLOCK_HIGH_BIT, highbit, "{:b} != {:b}", BLOCK_HIGH_BIT, highbit);
 
     // assert that Full.blocks() cancels out the high bit
-    let expected = highbit ^ block::max_value();
+    let expected = highbit ^ BlockLoc::max_value();
     let mut f = Full {
         _blocks: BLOCK_NULL,
         _index: INDEX_NULL,
@@ -654,7 +654,7 @@ fn test_indexes() {
         let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
         let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
 
-        let mut pool = RawPool::new(iptr, indexes.len() as index, bptr, blocks.len() as block);
+        let mut pool = RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc);
         let poolptr = (&mut pool) as *mut RawPool;
 
         assert_eq!(pool.get_unused_index().unwrap(), 0);

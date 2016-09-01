@@ -1,14 +1,14 @@
 use core;
 
-pub type block = u16;
-pub const BLOCK_NULL: block = block::max_value();
-pub const BLOCK_HIGH_BIT: block = !((block::max_value() << 1) >> 1);
-pub const BLOCK_BITMAP: block = !BLOCK_HIGH_BIT;
+pub type BlockLoc = u16;
+pub const BLOCK_NULL: BlockLoc = BlockLoc::max_value();
+pub const BLOCK_HIGH_BIT: BlockLoc = !((BlockLoc::max_value() << 1) >> 1);
+pub const BLOCK_BITMAP: BlockLoc = !BLOCK_HIGH_BIT;
 
-pub type index = u16;
-pub const INDEX_NULL: index = index::max_value();
-pub const INDEX_HIGH_BIT: index = !((index::max_value() << 1) >> 1);
-pub const INDEX_BITMAP: index = !INDEX_HIGH_BIT;
+pub type IndexLoc = u16;
+pub const INDEX_NULL: IndexLoc = IndexLoc::max_value();
+pub const INDEX_HIGH_BIT: IndexLoc = !((IndexLoc::max_value() << 1) >> 1);
+pub const INDEX_BITMAP: IndexLoc = !INDEX_HIGH_BIT;
 
 
 /// memory error codes

@@ -4,7 +4,7 @@ use core::mem;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
-use super::types::{Result, Error, index, block};
+use super::types::{Result, Error, IndexLoc, BlockLoc};
 use super::pool::{RawPool, Index, Block, Full};
 
 type TryLockResult<T> = core::result::Result<T, TryLockError>;
@@ -44,7 +44,7 @@ impl Pool {
         }
     }
 
-    pub fn alloc_slice<T>(&self, len: block) -> Result<SliceMutex<T>> {
+    pub fn alloc_slice<T>(&self, len: BlockLoc) -> Result<SliceMutex<T>> {
         unsafe {
             let actual_size: usize = mem::size_of::<Full>() + mem::size_of::<T>() * len as usize;
             let blocks = ceil(actual_size, mem::size_of::<Block>());
@@ -61,7 +61,7 @@ impl Pool {
 // # Standard Mutex
 
 struct Mutex<'a, T> {
-    index: index,
+    index: IndexLoc,
     pool: &'a Pool,
     _type: PhantomData<T>,
 }
@@ -115,9 +115,9 @@ impl<'a, T: 'a> DerefMut for MutexGuard<'a, T> {
 // # Slice Mutex
 
 struct SliceMutex<'a, T> {
-    index: index,
+    index: IndexLoc,
     pool: &'a Pool,
-    len: block,
+    len: BlockLoc,
     _type: PhantomData<T>,
 }
 
@@ -169,7 +169,7 @@ fn test_alloc() {
     let mut raw_pool = unsafe {
         let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
         let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
-        RawPool::new(iptr, indexes.len() as index, bptr, blocks.len() as block)
+        RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc)
     };
 
     let praw = &mut raw_pool as *mut RawPool;
@@ -205,7 +205,7 @@ fn test_alloc_slice() {
     let mut raw_pool = unsafe {
         let iptr: *mut Index = unsafe { mem::transmute(&mut indexes[..][0]) };
         let bptr: *mut Block = unsafe { mem::transmute(&mut blocks[..][0]) };
-        RawPool::new(iptr, indexes.len() as index, bptr, blocks.len() as block)
+        RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc)
     };
 
     let praw = &mut raw_pool as *mut RawPool;
