@@ -7,7 +7,7 @@ use core::ops::{Deref, DerefMut};
 use super::types::{Result, Error, IndexLoc, BlockLoc};
 use super::pool::{RawPool, Index, Block, Full};
 
-type TryLockResult<T> = core::result::Result<T, TryLockError>;
+pub type TryLockResult<T> = core::result::Result<T, TryLockError>;
 
 /// An enumeration of possible errors which can occur while calling the
 /// `try_lock` method.
@@ -18,7 +18,7 @@ pub enum TryLockError {
     WouldBlock,
 }
 
-struct Pool {
+pub struct Pool {
     raw: *mut RawPool,
 }
 
@@ -60,7 +60,7 @@ impl Pool {
 // ##################################################
 // # Standard Mutex
 
-struct Mutex<'a, T> {
+pub struct Mutex<'a, T> {
     index: IndexLoc,
     pool: &'a Pool,
     _type: PhantomData<T>,
@@ -84,7 +84,7 @@ impl<'a, T> Mutex<'a, T> {
 }
 
 
-struct MutexGuard<'a, T: 'a> {
+pub struct MutexGuard<'a, T: 'a> {
     // Maybe remove this 'a?
     __lock: &'a Mutex<'a, T>,
 }
@@ -114,7 +114,7 @@ impl<'a, T: 'a> DerefMut for MutexGuard<'a, T> {
 // ##################################################
 // # Slice Mutex
 
-struct SliceMutex<'a, T> {
+pub struct SliceMutex<'a, T> {
     index: IndexLoc,
     pool: &'a Pool,
     len: BlockLoc,
@@ -138,7 +138,7 @@ impl<'a, T> SliceMutex<'a, T> {
     }
 }
 
-struct SliceMutexGuard<'a, T: 'a> {
+pub struct SliceMutexGuard<'a, T: 'a> {
     __lock: &'a SliceMutex<'a, T>,
 }
 

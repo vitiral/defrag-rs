@@ -13,3 +13,12 @@ mod free;
 mod pool;
 mod mutex;
 mod utils;
+
+
+pub use types::{Error, Result};
+pub use pool::{Block, RawPool};
+pub use mutex::{TryLockResult, TryLockError,
+                Pool,
+                Mutex, MutexGuard,
+                SliceMutex, SliceMutexGuard};
+

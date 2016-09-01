@@ -6,7 +6,6 @@ pub const BLOCK_HIGH_BIT: BlockLoc = !((BlockLoc::max_value() << 1) >> 1);
 pub const BLOCK_BITMAP: BlockLoc = !BLOCK_HIGH_BIT;
 
 pub type IndexLoc = u16;
-pub const INDEX_NULL: IndexLoc = IndexLoc::max_value();
 pub const INDEX_HIGH_BIT: IndexLoc = !((IndexLoc::max_value() << 1) >> 1);
 pub const INDEX_BITMAP: IndexLoc = !INDEX_HIGH_BIT;
 

@@ -1,9 +1,8 @@
-use core::mem;
 use core::default::Default;
 use core::fmt;
 
 use super::types::*;
-use super::pool::{RawPool, Block, BlockType};
+use super::pool::RawPool;
 
 // ##################################################
 // # Free
@@ -119,23 +118,23 @@ impl Free {
         }
     }
 
-    /// append a freed block after this one
-    unsafe fn append(&mut self, pool: &mut RawPool, next: &mut Free) {
-        self.assert_valid();
-        let pool = pool as *mut RawPool;
-        if let Some(n) = self.next() {
-            // set prev of the next freed block (if it exists)
-            (*pool).freed_mut(n).set_prev(&mut (*pool), Some(next));
-        }
-        self.set_next(Some(next));
-    }
+    // /// append a freed block after this one
+    // unsafe fn append(&mut self, pool: &mut RawPool, next: &mut Free) {
+    //     self.assert_valid();
+    //     let pool = pool as *mut RawPool;
+    //     if let Some(n) = self.next() {
+    //         // set prev of the next freed block (if it exists)
+    //         (*pool).freed_mut(n).set_prev(&mut (*pool), Some(next));
+    //     }
+    //     self.set_next(Some(next));
+    // }
 
     /// remove self from the freed pool
     /// this also keeps track of the statistics for number of freed blocks
     pub unsafe fn remove(&mut self, pool: &mut RawPool) {
         self.assert_valid();
         /// convinience function for this method only
-        unsafe fn get_freed<'a>(pool: &'a mut RawPool, block: Option<BlockLoc>) -> Option<&'a mut Free> {
+        unsafe fn get_freed(pool: &mut RawPool, block: Option<BlockLoc>) -> Option<&mut Free> {
             match block {
                 Some(b) => {
                     assert!(b < pool.len_blocks() - 1);
@@ -314,8 +313,8 @@ impl FreedBins {
                     self.consume_partof(pool, out, blocks);
                     return Some(out.block());
                 }
-                let out = match out.next() {
-                    Some(o) => o,
+                out = match out.next() {
+                    Some(o) => (*poolptr).freed_mut(o),
                     None => return None,
                 };
             }
@@ -337,7 +336,6 @@ impl FreedBins {
         let old_blocks = freed.blocks();
         if old_blocks == blocks {
             // perfectly equal, consumes freed block
-            let old_block = freed.block();
             freed.remove(pool);
         } else {
             // use only the size that is needed, so append a new freed block

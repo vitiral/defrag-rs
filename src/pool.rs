@@ -5,7 +5,6 @@ what actually contains and maintains the indexes and memory.
 
 use core::mem;
 use core::ptr;
-use core::slice;
 use core::default::Default;
 use core::fmt;
 
@@ -256,21 +255,20 @@ pub struct DisplayRawPool<'a> {
 impl<'a> fmt::Display for DisplayRawPool<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let p = self.pool;
-        let mut o;
-        o = write!(f, "RawPool {{\n");
-        write!(f, "  * index_ptr: {:?}\n", p._indexes);
-        write!(f, "  * Indexes:  len: {}, used: {} remaining: {}\n",
-               p.len_indexes(), p.indexes_used, p.indexes_remaining());
+        try!(write!(f, "RawPool {{\n"));
+        try!(write!(f, "  * index_ptr: {:?}\n", p._indexes));
+        try!(write!(f, "  * Indexes:  len: {}, used: {} remaining: {}\n",
+                   p.len_indexes(), p.indexes_used, p.indexes_remaining()));
         for i in 0..p.len_indexes() {
             let index = unsafe{p.index(i)};
             match index.block_maybe() {
-                Some(block) => o = write!(f, "      {:<5}: {}\n", i, block),
+                Some(block) => try!(write!(f, "      {:<5}: {}\n", i, block)),
                 None => {},
             }
         }
-        write!(f, "  * blocks_ptr: {:?}\n", p._blocks);
-        o = write!(f, "  * Block Data (len: {}, used: {} remain: {})\n",
-                     p.len_blocks(), p.blocks_used, p.blocks_remaining());
+        try!(write!(f, "  * blocks_ptr: {:?}\n", p._blocks));
+        try!(write!(f, "  * Block Data (len: {}, used: {} remain: {})\n",
+                     p.len_blocks(), p.blocks_used, p.blocks_remaining()));
         unsafe {
             let ptr = p as *const RawPool;
             let mut block = (*ptr).first_block();
@@ -279,28 +277,27 @@ impl<'a> fmt::Display for DisplayRawPool<'a> {
                 None => 0,
             };
             while let Some(b) = block {
-                o = write!(f, "      {:<5}: {}\n",
+                try!(write!(f, "      {:<5}: {}\n",
                            (b as usize - first_block) / mem::size_of::<Block>(),
-                           *b);
+                           *b));
                 block = (*b).next_mut(&*ptr).map(|b| b as *mut Block);
             }
         }
-        o = write!(f, "      {:<5}: HEAP\n", p.heap_block);
-        o = write!(f, "  * Freed Bins (len: {}):\n",
-                     p.freed_bins.len);
+        try!(write!(f, "      {:<5}: HEAP\n", p.heap_block));
+        try!(write!(f, "  * Freed Bins (len: {}):\n",
+                     p.freed_bins.len));
         unsafe {
             for b in 0..NUM_BINS {
-                o = write!(f, "      [{}] bin {}: ", FreedBins::bin_repr(b), b);
+                try!(write!(f, "      [{}] bin {}: ", FreedBins::bin_repr(b), b));
                 let mut freed = p.freed_bins.bins[b as usize].root(p);
                 while let Some(fr) = freed {
-                    o = write!(f, "{} ", fr.block());
+                    write!(f, "{} ", fr.block());
                     freed = fr.next().map(|b| p.freed(b))
                 }
-                o = write!(f, "\n");
+                try!(write!(f, "\n"));
             }
         }
-        o = write!(f, "}}");
-        o
+        write!(f, "}}")
     }
 }
 
@@ -629,7 +626,7 @@ fn test_basic() {
     let expected = highbit ^ BlockLoc::max_value();
     let mut f = Full {
         _blocks: BLOCK_NULL,
-        _index: INDEX_NULL,
+        _index: 0,
     };
     assert_eq!(f.blocks(), expected);
 
