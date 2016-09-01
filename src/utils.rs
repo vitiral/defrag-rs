@@ -1,5 +1,3 @@
-
-use super::types::*;
 use super::pool::*;
 use super::free::*;
 

@@ -1,17 +1,16 @@
-use core;
-use core::ptr;
-use core::cell::UnsafeCell;
-use core::mem;
-use core::marker::PhantomData;
-use core::ops::{Deref, DerefMut};
+use core::result;
 use core::default::Default;
+use core::ops::{Deref, DerefMut};
+use core::marker::PhantomData;
+use core::mem;
+use core::slice;
 
 use alloc::heap;
 
 use super::types::{Result, Error, IndexLoc, BlockLoc};
 use super::pool::{RawPool, Index, Block, Full};
 
-pub type TryLockResult<T> = core::result::Result<T, TryLockError>;
+pub type TryLockResult<T> = result::Result<T, TryLockError>;
 
 /// An enumeration of possible errors which can occur while calling the
 /// `try_lock` method.
@@ -96,8 +95,8 @@ impl Pool {
             }
 
             let pool = pool as *mut RawPool;
-            let mut indexes = indexes as *mut Index;
-            let mut blocks = blocks as *mut Block;
+            let indexes = indexes as *mut Index;
+            let blocks = blocks as *mut Block;
 
             // initialize our memory and return
             *pool = RawPool::new(indexes, num_indexes, blocks, num_blocks as u16);
@@ -212,7 +211,7 @@ impl<'a, T: 'a> Deref for MutexGuard<'a, T> {
         unsafe {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
-            mem::transmute(pool.data(index.block()))
+            &*(pool.data(index.block()) as *const T)
         }
     }
 }
@@ -222,7 +221,7 @@ impl<'a, T: 'a> DerefMut for MutexGuard<'a, T> {
         unsafe {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
-            mem::transmute(pool.data(index.block()))
+            &mut *(pool.data(index.block()) as *mut T)
         }
     }
 }
@@ -262,26 +261,27 @@ pub struct SliceMutexGuard<'a, T: 'a> {
     __lock: &'a SliceMutex<'a, T>,
 }
 
+#[allow(should_implement_trait)]  // TODO: is it possible to implement?
 impl<'a, T: 'a> SliceMutexGuard<'a, T> {
     /// rust's type system does not allow Deref to implement `&[T]`,
     /// so you must call `deref` explicitly to use your slice
-    fn deref(&mut self) -> &[T] {
+    pub fn deref(&mut self) -> &[T] {
         unsafe {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
             let t: *const T = mem::transmute(pool.data(index.block()));
-            core::slice::from_raw_parts(t, self.__lock.len as usize)
+            slice::from_raw_parts(t, self.__lock.len as usize)
         }
     }
 
     /// rust's type system does not allow Deref to implement `&mut [T]`,
     /// so you must call `deref_mut` explicitly to use your slice
-    fn deref_mut(&mut self) -> &mut [T] {
+    pub fn deref_mut(&mut self) -> &mut [T] {
         unsafe {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
             let t: *mut T = mem::transmute(pool.data(index.block()));
-            core::slice::from_raw_parts_mut(t, self.__lock.len as usize)
+            slice::from_raw_parts_mut(t, self.__lock.len as usize)
         }
     }
 }

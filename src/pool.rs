@@ -423,6 +423,7 @@ impl RawPool {
     pub unsafe fn defrag(&mut self) {
         /// this is the function for handling when Full values are found
         /// it moves them backwards if they are unlocked
+        #[allow(clone_on_copy)]  // we want to be explicity that we are copying
         fn full_fn(pool: &mut RawPool, last_freed: Option<*mut Free>, full: &mut Full)
                    -> Option<*mut Free> {
             unsafe {
@@ -608,7 +609,7 @@ fn test_basic() {
 
     // assert that Full.blocks() cancels out the high bit
     let expected = highbit ^ BlockLoc::max_value();
-    let mut f = Full {
+    let f = Full {
         _blocks: BLOCK_NULL,
         _index: 0,
     };
@@ -630,14 +631,11 @@ fn test_basic() {
 /// test using raw indexes
 fn test_indexes() {
     unsafe {
-        let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = unsafe {
-            ([Index::default(); 256], mem::zeroed())
-        };
+        let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = ([Index::default(); 256], mem::zeroed());
         let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
         let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
 
         let mut pool = RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc);
-        let poolptr = (&mut pool) as *mut RawPool;
 
         assert_eq!(pool.get_unused_index().unwrap(), 0);
         assert_eq!(pool.get_unused_index().unwrap(), 1);
@@ -703,11 +701,9 @@ fn test_indexes() {
         used_indexes += 1;
         blocks_allocated += 8;
         assert_eq!(i2, times_allocated - 1);
-        let block2;
         {
             let index2 = (*(&pool as *const RawPool)).index(i2);
             assert_eq!(index2._block, 5);
-            block2 = index2.block();
             assert_eq!(pool.full(index2.block()).blocks(), 8);
             assert_eq!(pool.full(index2.block())._blocks, BLOCK_HIGH_BIT | 8);
         }
@@ -720,11 +716,9 @@ fn test_indexes() {
         used_indexes += 1;
         blocks_allocated += 2;
         assert_eq!(i3, times_allocated - 1);
-        let block3;
         {
             let index3 = (*(&pool as *const RawPool)).index(i3);
             assert_eq!(index3._block, 0);
-            block3 = index3.block();
             assert_eq!(pool.full(index3.block()).blocks(), 2);
             assert_eq!(pool.full(index3.block())._blocks, BLOCK_HIGH_BIT | 2);
         }
@@ -749,12 +743,13 @@ fn test_indexes() {
             pool.alloc_index(4).unwrap());
 
         times_allocated += 3;
+        assert_eq!(allocs.2, times_allocated - 1);
+
         used_indexes += 1;
         blocks_allocated += 4;
         let free_block = pool.index(allocs.0).block();
         pool.dealloc_index(allocs.0);
         pool.dealloc_index(allocs.1);
-
 
         println!("cleaning freed");
         println!("{}", pool.display());
