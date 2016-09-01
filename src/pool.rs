@@ -557,26 +557,22 @@ impl RawPool {
 
     /// read the block as a Free block
     pub unsafe fn freed(&self, block: BlockLoc) -> &Free {
-        let ptr = self._blocks.offset(block as isize);
-        mem::transmute(ptr)
+        &*(self._blocks.offset(block as isize) as *const Free)
     }
 
     /// mut the block as a Free block
     pub unsafe fn freed_mut(&self, block: BlockLoc) -> &mut Free {
-        let ptr = self._blocks.offset(block as isize);
-        mem::transmute(ptr)
+        &mut *(self._blocks.offset(block as isize) as *mut Free)
     }
 
     /// read the block as a Full block
     pub unsafe fn full(&self, block: BlockLoc) -> &Full {
-        let ptr = self._blocks.offset(block as isize);
-        mem::transmute(ptr)
+        &*(self._blocks.offset(block as isize) as *const Full)
     }
 
     /// mut the block as a Full block
     pub unsafe fn full_mut(&self, block: BlockLoc) -> &mut Full {
-        let ptr = self._blocks.offset(block as isize);
-        mem::transmute(ptr)
+        &mut (self._blocks.offset(block as isize) as *mut Full)
     }
 
     // private API
