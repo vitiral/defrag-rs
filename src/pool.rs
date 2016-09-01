@@ -177,11 +177,11 @@ pub struct Full {
 impl fmt::Debug for Full {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let isvalid = if self.is_valid() {" "} else {"!"};
-        write!(f, "Full{}{{index: {}, blocks: {}, L: {}}}{}",
+        write!(f, "Full{}{{blocks: {}, index: {}, locked: {}}}{}",
                isvalid,
-               self._index & BLOCK_BITMAP,
                self._blocks & BLOCK_BITMAP,
-               self._index & INDEX_HIGH_BIT == INDEX_HIGH_BIT,
+               self._index & BLOCK_BITMAP,
+               if self._index & INDEX_HIGH_BIT == INDEX_HIGH_BIT {1} else {0},
                isvalid
         )
     }
@@ -258,6 +258,7 @@ impl<'a> fmt::Display for DisplayRawPool<'a> {
         let p = self.pool;
         let mut o;
         o = write!(f, "RawPool {{\n");
+        write!(f, "  * index_ptr: {:?}\n", p._indexes);
         write!(f, "  * Indexes:  len: {}, used: {} remaining: {}\n",
                p.len_indexes(), p.indexes_used, p.indexes_remaining());
         for i in 0..p.len_indexes() {
@@ -267,7 +268,7 @@ impl<'a> fmt::Display for DisplayRawPool<'a> {
                 None => {},
             }
         }
-
+        write!(f, "  * blocks_ptr: {:?}\n", p._blocks);
         o = write!(f, "  * Block Data (len: {}, used: {} remain: {})\n",
                      p.len_blocks(), p.blocks_used, p.blocks_remaining());
         unsafe {
@@ -444,14 +445,17 @@ impl RawPool {
                             //  - the free.prev/next do not change
                             //  - only the locations of full and free change, requiring their
                             //      data, and the items pointing at them, to be updated
+                            println!("### Moving Backwards:\n{}", pool.display());
                             let i = full.index();
                             let blocks = full.blocks();
+                            println!("blocks={}", blocks);
                             let mut free_tmp = (**free).clone();
-                            // println!("free tmp: {:?}", free_tmp);
+                            println!("before tmp: {:?}", free_tmp);
                             let fullptr: *mut Block = mem::transmute(full);  // note: consumes full
 
                             // perform the move of the data
                             ptr::copy(fullptr, (*free) as *mut Block, blocks as usize);
+                            println!("after  tmp: {:?}", free_tmp);
 
                             // it would be bad if we tried to access these anymore
                             drop(free);
@@ -484,6 +488,7 @@ impl RawPool {
                             let new_free_loc = (*poolptr).freed_mut(free_tmp._block);
                             *new_free_loc = free_tmp;
 
+                            println!("new free: {:?}", new_free_loc);
                             // the new_free is the last_freed for the next cycle
                             Some(new_free_loc as *mut Free)
                         }
@@ -554,6 +559,10 @@ impl RawPool {
         } else {
             Some(self._blocks)
         }
+    }
+
+    pub unsafe fn block(&self, block: block) -> *mut Block {
+        self._blocks.offset(block as isize)
     }
 
     /// read the block as a Free block
@@ -772,6 +781,8 @@ fn test_indexes() {
             let free = pool.freed(free_block);
             assert_eq!(free.blocks(), 8);
         }
+        pool.clean();
+        pool.clean();
 
         // defrag and make sure everything looks like how one would expect it
         println!("defragging");

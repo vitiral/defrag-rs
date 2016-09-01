@@ -35,10 +35,10 @@ impl fmt::Debug for Free {
             self._next as isize
         };
         let isvalid = if self.is_valid() {" "} else {"!"};
-        write!(f, "Free{}{{block: {}, blocks: {}, prev: {}, next: {}}}{}",
+        write!(f, "Free{}{{blocks: {}, block: {}, prev: {}, next: {}}}{}",
                isvalid,
-               self._block & BLOCK_BITMAP,
                self._blocks & BLOCK_BITMAP,
+               self._block & BLOCK_BITMAP,
                prev, next, isvalid)
     }
 }

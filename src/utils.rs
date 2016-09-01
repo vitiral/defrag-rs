@@ -11,12 +11,16 @@ pub unsafe fn base_clean(pool: &mut RawPool,
     let poolptr = pool as *mut RawPool;
     let mut block_maybe = (*poolptr).first_block();
     let mut last_freed: Option<*mut Free> = None;
-    while let Some(block) = block_maybe {
+    while let Some(mut block) = block_maybe {
+        match last_freed {
+            Some(ref last) => println!("utils: last={:?}", **last),
+            None => println!("utils: last=None"),
+        }
         last_freed = match (*block).ty() {
             BlockType::Free => {
-                print!("block={:>3} ", (*block).block(pool));
                 let free = (*block).as_free_mut();
-                println!("{:?}", free);
+                println!("  block={:>3} {:?}",
+                       (*block).block(pool), free);
                 match last_freed {
                     Some(ref last) => {
                         // combines the last with the current
@@ -31,10 +35,14 @@ pub unsafe fn base_clean(pool: &mut RawPool,
                 }
             },
             BlockType::Full => {
-                print!("block={:>3} ", (*block).block(pool));
                 let full = (*block).as_full_mut();
-                println!("{:?}", full);
-                full_fn(pool, last_freed, full)
+                println!("  block={:?}", full);
+                last_freed = full_fn(pool, last_freed, full);
+                if let Some(ref last) = last_freed {
+                    // data was swapped, last freed is already the "next" block
+                    block = pool.block((**last).block());
+                }
+                last_freed
             }
         };
         block_maybe = match (*block).next_mut(pool) {
