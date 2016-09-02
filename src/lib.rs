@@ -3,12 +3,15 @@
 #![feature(heap_api)]
 #![feature(const_fn)]
 
-// #![no_std]
-// #[cfg(test)]
-// #[macro_use] extern crate std;
-// #[cfg(test)] use std::prelude::*;
+#![no_std]
+// extern crate core;
 
-extern crate core;
+// test utilities
+#[cfg(test)]
+#[macro_use] extern crate std;
+#[cfg(test)] use std::prelude::*;
+#[cfg(test)] extern crate rand;
+
 extern crate alloc;
 
 
@@ -17,6 +20,9 @@ mod free;
 mod raw_pool;
 mod pool;
 mod utils;
+
+#[cfg(test)]
+mod tests;
 
 
 pub use types::{Error, Result};

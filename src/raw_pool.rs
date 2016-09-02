@@ -248,11 +248,11 @@ pub struct RawPool {
 
 }
 
-pub struct DisplayRawPool<'a> {
+pub struct DisplayPool<'a> {
     pool: &'a RawPool,
 }
 
-impl<'a> fmt::Display for DisplayRawPool<'a> {
+impl<'a> fmt::Display for DisplayPool<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let p = self.pool;
         try!(write!(f, "RawPool {{\n"));
@@ -301,8 +301,8 @@ impl<'a> fmt::Display for DisplayRawPool<'a> {
 }
 
 impl RawPool {
-    pub fn display(&self) -> DisplayRawPool {
-        DisplayRawPool{pool: self}
+    pub fn display(&self) -> DisplayPool {
+        DisplayPool{pool: self}
     }
 
     // Public unsafe API
@@ -379,6 +379,7 @@ impl RawPool {
             let full = self.full_mut(block);
             full._blocks = blocks | BLOCK_HIGH_BIT;
             full._index = i;  // starts unlocked
+            assert!(full.is_locked() == false);
         }
         self.indexes_used += 1;
         self.blocks_used += blocks;
@@ -438,17 +439,14 @@ impl RawPool {
                         //  - the free.prev/next do not change
                         //  - only the locations of full and free change, requiring their
                         //      data, and the items pointing at them, to be updated
-                        println!("### Moving Backwards:\n{}", pool.display());
+                        // println!("### Moving Backwards:\n{}", pool.display());
                         let i = full.index();
                         let blocks = full.blocks();
-                        println!("blocks={}", blocks);
                         let mut free_tmp = (**free).clone();
-                        println!("before tmp: {:?}", free_tmp);
                         let fullptr = full as *mut Full as *mut Block;
 
                         // perform the move of the data
                         ptr::copy(fullptr, (*free) as *mut Block, blocks as usize);
-                        println!("after  tmp: {:?}", free_tmp);
 
                         // Note: don't use free, full or fullptr after this
 
@@ -479,7 +477,7 @@ impl RawPool {
                         let new_free_loc = (*poolptr).freed_mut(free_tmp._block);
                         *new_free_loc = free_tmp;
 
-                        println!("new free: {:?}", new_free_loc);
+                        // println!("new free: {:?}", new_free_loc);
                         // the new_free is the last_freed for the next cycle
                         Some(new_free_loc as *mut Free)
                     },
@@ -752,7 +750,7 @@ fn test_indexes() {
         pool.dealloc_index(allocs.1);
 
         println!("cleaning freed");
-        println!("{}", pool.display());
+        // println!("{}", pool.display());
         pool.clean();
         {
             let free = pool.freed(free_block);
@@ -763,11 +761,11 @@ fn test_indexes() {
 
         // defrag and make sure everything looks like how one would expect it
         println!("defragging");
-        println!("{}", pool.display());
+        // println!("{}", pool.display());
         pool.defrag();
 
         println!("done defragging");
-        println!("{}", pool.display());
+        // println!("{}", pool.display());
         assert_eq!(pool.freed_bins.len, 0);
         assert_eq!(pool.blocks_used, blocks_allocated);
         assert_eq!(pool.indexes_used, used_indexes);

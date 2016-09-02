@@ -8,7 +8,7 @@ use core::slice;
 use alloc::heap;
 
 use super::types::{Result, Error, IndexLoc, BlockLoc};
-use super::raw_pool::{RawPool, Index, Block, Full};
+use super::raw_pool::{RawPool, Index, Block, Full, DisplayPool};
 
 pub type TryLockResult<T> = result::Result<T, TryLockError>;
 
@@ -158,6 +158,21 @@ impl Pool {
             Ok(SliceMutex{index: i, len: len, pool: self, _type: PhantomData})
         }
     }
+
+
+    pub fn display(&self) -> DisplayPool {
+        unsafe {
+            (*self.raw).display()
+        }
+    }
+
+    pub fn clean(&self) {
+        unsafe { (*self.raw).clean() }
+    }
+
+    pub fn defrag(&self) {
+        unsafe { (*self.raw).defrag() }
+    }
 }
 
 // ##################################################
@@ -202,6 +217,16 @@ impl<'a, T> Mutex<'a, T> {
 pub struct MutexGuard<'a, T: 'a> {
     // Maybe remove this 'a?
     __lock: &'a Mutex<'a, T>,
+}
+
+impl<'a, T: 'a> Drop for MutexGuard<'a, T> {
+    fn drop(&mut self) {
+        unsafe {
+            let pool = &mut *self.__lock.pool.raw;
+            let index = pool.index(self.__lock.index);
+            pool.full_mut(index.block()).clear_lock();
+        }
+    }
 }
 
 impl<'a, T: 'a> Deref for MutexGuard<'a, T> {
@@ -259,6 +284,16 @@ impl<'a, T> SliceMutex<'a, T> {
 
 pub struct SliceMutexGuard<'a, T: 'a> {
     __lock: &'a SliceMutex<'a, T>,
+}
+
+impl<'a, T: 'a> Drop for SliceMutexGuard<'a, T> {
+    fn drop(&mut self) {
+        unsafe {
+            let pool = &mut *self.__lock.pool.raw;
+            let index = pool.index(self.__lock.index);
+            pool.full_mut(index.block()).clear_lock();
+        }
+    }
 }
 
 impl<'a, T: 'a> Deref for SliceMutexGuard<'a, T> {
