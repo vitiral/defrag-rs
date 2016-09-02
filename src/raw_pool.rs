@@ -495,7 +495,7 @@ impl RawPool {
         self._blocks_len
     }
 
-    pub fn len_indexes(&self) -> BlockLoc {
+    pub fn len_indexes(&self) -> IndexLoc {
         self._indexes_len
     }
 

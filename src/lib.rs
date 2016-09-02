@@ -11,6 +11,7 @@
 #[macro_use] extern crate std;
 #[cfg(test)] use std::prelude::*;
 #[cfg(test)] extern crate rand;
+#[cfg(test)] extern crate stopwatch;
 
 extern crate alloc;
 

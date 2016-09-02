@@ -266,8 +266,8 @@ impl FreedBins {
     /// insert a Free block into a freed bin
     /// this is the only method that Pool uses to store deallocated indexes
     pub unsafe fn insert(&mut self, pool: &mut RawPool, freed: &mut Free) {
-        assert!(freed.block() < pool.heap_block);
-        assert!(freed.blocks() < pool.blocks_used);
+        assert!(freed.block() + freed.blocks() < pool.heap_block);
+        // assert!(freed.blocks() < pool.blocks_used);
         self.len += 1;
         let bin = self.get_insert_bin(freed.blocks());
         self.bins[bin as usize].insert_root(pool, freed);

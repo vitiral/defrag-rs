@@ -173,6 +173,10 @@ impl Pool {
     pub fn defrag(&self) {
         unsafe { (*self.raw).defrag() }
     }
+
+    pub fn len_indexes(&self) -> IndexLoc {
+        unsafe { (*self.raw).len_indexes() }
+    }
 }
 
 // ##################################################
@@ -206,6 +210,14 @@ impl<'a, T> Mutex<'a, T> {
                 assert!(full.is_locked());
                 Ok(MutexGuard{__lock: self})
             }
+        }
+    }
+}
+
+impl<'a, T> Drop for Mutex<'a, T> {
+    fn drop(&mut self) {
+        unsafe {
+            (*self.pool.raw).dealloc_index(self.index)
         }
     }
 }
@@ -262,6 +274,14 @@ pub struct SliceMutex<'a, T> {
     pool: &'a Pool,
     len: BlockLoc,
     _type: PhantomData<T>,
+}
+
+impl<'a, T> Drop for SliceMutex<'a, T> {
+    fn drop(&mut self) {
+        unsafe {
+            (*self.pool.raw).dealloc_index(self.index)
+        }
+    }
 }
 
 impl<'a, T> SliceMutex<'a, T> {

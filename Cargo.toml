@@ -3,5 +3,6 @@ name = "defrag"
 version = "0.1.0"
 authors = ["Garrett Berg <vitiral@gmail.com>"]
 
-[dependencies]
+[dev-dependencies]
 rand = "0.3"
+stopwatch = "0.0.7"
