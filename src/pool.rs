@@ -261,11 +261,10 @@ pub struct SliceMutexGuard<'a, T: 'a> {
     __lock: &'a SliceMutex<'a, T>,
 }
 
-#[allow(should_implement_trait)]  // TODO: is it possible to implement?
-impl<'a, T: 'a> SliceMutexGuard<'a, T> {
-    /// rust's type system does not allow Deref to implement `&[T]`,
-    /// so you must call `deref` explicitly to use your slice
-    pub fn deref(&mut self) -> &[T] {
+impl<'a, T: 'a> Deref for SliceMutexGuard<'a, T> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] {
         unsafe {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
@@ -273,10 +272,11 @@ impl<'a, T: 'a> SliceMutexGuard<'a, T> {
             slice::from_raw_parts(t, self.__lock.len as usize)
         }
     }
+}
 
-    /// rust's type system does not allow Deref to implement `&mut [T]`,
-    /// so you must call `deref_mut` explicitly to use your slice
-    pub fn deref_mut(&mut self) -> &mut [T] {
+
+impl<'a, T: 'a> DerefMut for SliceMutexGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut [T] {
         unsafe {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
