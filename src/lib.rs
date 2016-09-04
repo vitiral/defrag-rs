@@ -1,19 +1,18 @@
 /*!
-# defrag: safe and low overhead memory manager for microcontrollers
+# defrag: safe and efficient memory manager for microcontrollers
 
 **This library is in the Alpha release and is subject to change**
 
 The defrag memory manager aims to bring safe heap memory management
 to microcontrollers. Combined with rust's excellent type system and
 borrow checker, creating complex applications with limited resources
-is easier than it has ever been before. **defrag** has an ultra-low
-overhead of only 64 bits per allocated block of memory, making allocations
-of any size very cheap.
+is easier than it has ever been before.
 
 The possibility of fragmentation is the primary reason that dynamic memory
 allocation is not used on microcontrollers. *defrag*, as the name implies,
 is able to defragment memory -- giving your embedded application power,
-reliability and simplicity.
+reliability and simplicity. Also, the overhead of each allocated block is
+only 64 bits, so allocations are very cheap.
 
 ## How it works
 The primary manager of memory is the `Pool`, from which the user can call
@@ -26,9 +25,10 @@ to solve potential fragmentation issues. `pool.clean()` combines contiguous
 free blocks and `pool.defrag()` defragments memory. In addition, there are
 various strategies for utilzing freed blocks of memory.
 
-> This library is intended only for (single threaded) microcontrollers, so it's `Mutex`
-> does not implement `Send` or `Sync` (it cannot be shared between threads). Depending
-> on what kind of architectures or OS's spring up on uC rust code, this may change.
+> Note: This library is intended only for (single threaded) microcontrollers, so
+> it's `Mutex` > does not implement `Send` or `Sync` (it cannot be shared
+> between threads). Depending on what kind of architectures or OS's spring up on
+> uC rust code, this may change.
 */
 
 #![allow(unknown_lints)]
