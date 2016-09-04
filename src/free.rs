@@ -493,6 +493,12 @@ fn test_bins() {
         let b1_3 = pool.freed_mut(30);
         let b1_4 = pool.freed_mut(40);
 
+        let b2_0 = pool.freed_mut(50);
+        let b2_1 = pool.freed_mut(70);
+        let b2_2 = pool.freed_mut(90);
+        let b2_3 = pool.freed_mut(110);
+        let b2_4 = pool.freed_mut(130);
+
         // bins are a first in / last out buffer
         assert_eq!(pool.freed_bins.bins[1]._root, b1_4.block());
         assert_eq!(b1_4.prev(), None);
@@ -526,8 +532,43 @@ fn test_bins() {
         assert_eq!(b1_3.prev(), Some(b1_4.block()));
         assert_eq!(b1_3.next(), Some(b1_2.block()));
 
-        // test join
+        // test "simpler" join
+        b1_0.join(&mut *p, b1_1);
+        let b2_5 = pool.freed_mut(b1_0.block());
+        assert_eq!(pool.freed_bins.len, 9);
+        assert_eq!(b2_5.blocks(), 20);
+        assert_eq!(pool.freed_bins.bins[2]._root, b2_5.block());
+        assert_eq!(b2_5.prev(), None);
+        assert_eq!(b2_5.next(), Some(b2_4.block()));
 
+        // more complex join... joining things from separate bins
+        // not actually that much more complex in the logic though
+        b2_5.join(&mut *p, b1_2);
+        assert_eq!(pool.freed_bins.len, 8);
+        assert_eq!(b2_5.blocks(), 30);
+        assert_eq!(pool.freed_bins.bins[2]._root, b2_5.block());
+        assert_eq!(b2_5.prev(), None);
+        assert_eq!(b2_5.next(), Some(b2_4.block()));
+
+        b2_5.join(&mut *p, b1_3);
+        b2_5.join(&mut *p, b1_4);
+        assert_eq!(pool.freed_bins.len, 6);
+        assert_eq!(b2_5.blocks(), 50);
+        assert_eq!(pool.freed_bins.bins[2]._root, b2_5.block());
+        assert_eq!(b2_5.prev(), None);
+        assert_eq!(b2_5.next(), Some(b2_4.block()));
+
+        b2_5.join(&mut *p, b2_0);
+        let b3_0 = pool.freed_mut(b2_5.block());
+        assert_eq!(pool.freed_bins.len, 5);
+        assert_eq!(b2_5.blocks(), 70);
+        assert_eq!(pool.freed_bins.bins[2]._root, b2_4.block());
+        assert_eq!(pool.freed_bins.bins[3]._root, b3_0.block());
+        assert_eq!(b3_0.prev(), None);
+        assert_eq!(b3_0.next(), None);
+
+        assert_eq!(b2_4.prev(), None);
+        assert_eq!(b2_4.next(), Some(b2_3.block()));
     }
 }
 
