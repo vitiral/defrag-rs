@@ -206,21 +206,21 @@ impl Full {
         self._index &= INDEX_BITMAP
     }
 
-    fn blocks(&self) -> BlockLoc {
+    pub fn blocks(&self) -> BlockLoc {
         self.assert_valid();
         self._blocks & BLOCK_BITMAP
     }
 
-    fn index(&self) -> BlockLoc {
+    pub fn index(&self) -> BlockLoc {
         self.assert_valid();
         self._index & INDEX_BITMAP
     }
 
-    fn is_valid(&self) -> bool {
+    pub fn is_valid(&self) -> bool {
         self._blocks & BLOCK_HIGH_BIT == BLOCK_HIGH_BIT && self._blocks & BLOCK_BITMAP != 0
     }
 
-    fn assert_valid(&self) {
+    pub fn assert_valid(&self) {
         assert!(self.is_valid(), "{:?}", self);
     }
 }

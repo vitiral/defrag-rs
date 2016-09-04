@@ -476,7 +476,10 @@ fn test_bins() {
 
         let bin2 = Vec::from_iter(
             (0..5).map(|_| pool.alloc_index(20).unwrap()));
-        pool.alloc_index(1).unwrap();
+        let f1_i = pool.alloc_index(1).unwrap();
+        let f1_index = (*p).index(f1_i);
+        assert_eq!(f1_index.block(), 150);
+        assert_eq!(f1_i, 10);
 
         for (i1, i2) in bin1.iter().zip(bin2.iter()) {
             pool.dealloc_index(*i2);
@@ -569,6 +572,20 @@ fn test_bins() {
 
         assert_eq!(b2_4.prev(), None);
         assert_eq!(b2_4.next(), Some(b2_3.block()));
+
+        // this is just a really good place to test clean and defrag too...
+        (*p).clean();
+        assert_eq!(pool.freed_bins.len, 1);
+        assert_eq!(b1_0.blocks(), 150);
+
+        (*p).defrag();
+        assert_eq!(pool.freed_bins.len, 0);
+        assert_eq!(pool.heap_block, 1);
+        let f1_0 = pool.full(0);
+        f1_0.assert_valid();
+        assert_eq!(f1_0.blocks(), 1);
+        assert_eq!(f1_0.index(), f1_i);
+        assert_eq!(f1_index.block(), 0);
     }
 }
 
