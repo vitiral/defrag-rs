@@ -66,7 +66,6 @@ impl Block {
     pub unsafe fn next_mut(&mut self, pool: &RawPool) -> Option<&mut Block> {
         let block = self.block(pool);
         let blocks = self.blocks();
-        // println!(" * next: block={}, blocks={}", block, blocks);
         if block + blocks == pool.heap_block {
             None
         } else {
@@ -380,7 +379,7 @@ impl RawPool {
             let full = self.full_mut(block);
             full._blocks = blocks | BLOCK_HIGH_BIT;
             full._index = i;  // starts unlocked
-            assert!(full.is_locked() == false);
+            assert!(!full.is_locked());
         }
         self.indexes_used += 1;
         self.blocks_used += blocks;
@@ -440,7 +439,6 @@ impl RawPool {
                         //  - the free.prev/next do not change
                         //  - only the locations of full and free change, requiring their
                         //      data, and the items pointing at them, to be updated
-                        // println!("### Moving Backwards:\n{}", pool.display());
                         let i = full.index();
                         let blocks = full.blocks();
                         let mut free_tmp = (**free).clone();
@@ -480,7 +478,6 @@ impl RawPool {
                         let new_free_loc = (*poolptr).freed_mut(free_tmp.block());
                         *new_free_loc = free_tmp;
 
-                        // println!("new free: {:?}", new_free_loc);
                         // the new_free is the last_freed for the next cycle
                         Some(new_free_loc as *mut Free)
                     },

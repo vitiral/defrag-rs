@@ -205,12 +205,15 @@ impl<'a> Allocation<'a> {
 }
 
 
+// TODO: several parameters (like number of loops) need to be moved into settings
+// and then several "benchmark" tests need to be created that can only be run in release
+// mode... in release 1000 loops takes < 1 sec, in debug mode it takes over a minute.
 fn do_test(pool: &Pool, allocs: &mut Vec<Allocation>, track: &mut Tracker) {
     println!("len allocs: {}", allocs.len());
     println!("some random values: {}, {}, {}",
              track.gen.gen::<u16>(), track.gen.gen::<u16>(), track.gen.gen::<u16>());
     track.test_clock.start();
-    for _ in 0..1000 {
+    for _ in 0..50 {
         for alloc in allocs.iter_mut() {
             alloc.do_random(track).unwrap();
         }

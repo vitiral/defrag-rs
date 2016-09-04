@@ -1,9 +1,9 @@
 #[cfg(test)] use std::vec::Vec;
 #[cfg(test)] use std::iter::FromIterator;
+#[cfg(test)] use core::mem;
 
 use core::default::Default;
 use core::fmt;
-use core::mem;
 
 use super::types::*;
 use super::raw_pool::*;
