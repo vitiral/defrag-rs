@@ -1,3 +1,3 @@
 language: rust
-before_script:
- - cargo run -- check
+rust:
+  - nightly
