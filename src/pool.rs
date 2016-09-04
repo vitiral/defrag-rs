@@ -32,7 +32,7 @@ Pool memory can be accessed through the `alloc` and `alloc_slice` methods
 returning memory protected behind a `Mutex`. The Mutex allows Pool to
 defragment application memory when it is not in use, solving the problem
 of memory fragmentation for embedded systems.
- */
+*/
 pub struct Pool {
     raw: *mut RawPool,
 }

@@ -3,7 +3,7 @@
 
 **This library is in the Alpha release and is subject to change**
 
-The defrag memory manager aims to bring safe heap memory management
+This library aims to bring safe heap memory management
 to microcontrollers. Combined with rust's excellent type system and
 borrow checker, creating complex applications with limited resources
 is easier than it has ever been before.
