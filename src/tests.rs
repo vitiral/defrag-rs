@@ -208,7 +208,7 @@ fn do_test(pool: &Pool, allocs: &mut Vec<Allocation>, track: &mut Tracker) {
     println!("some random values: {}, {}, {}",
              track.gen.gen::<u16>(), track.gen.gen::<u16>(), track.gen.gen::<u16>());
     track.test_clock.start();
-    for _ in 0..1000 {
+    for _ in 0..100 {
         for alloc in allocs.iter_mut() {
             alloc.do_random(track).unwrap();
         }
@@ -217,12 +217,12 @@ fn do_test(pool: &Pool, allocs: &mut Vec<Allocation>, track: &mut Tracker) {
     track.test_clock.stop();
 }
 
-// #[test]
+#[test]
 fn test_it() {
-    // let blocks = u16::max_value() / 4;
-    let blocks = 4096 * 4;
+    let blocks = u16::max_value() / 4;
+    // let blocks = 4096 * 4;
     let size = blocks as usize * mem::size_of::<Block>();
-    let len_indexes = blocks / 128;
+    let len_indexes = blocks / 10;
     let mut pool = Pool::new(size, len_indexes).expect("can't get pool");
     let mut allocs = Vec::from_iter(
         (0..pool.len_indexes())
