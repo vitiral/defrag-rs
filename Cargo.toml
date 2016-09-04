@@ -1,7 +1,11 @@
 [package]
 name = "defrag"
 version = "0.1.0"
+description = "safe and low overhead memory manager for microcontrollers"
+keywords = ["embedded", "memory", "manager", "microcontroller"]
 authors = ["Garrett Berg <vitiral@gmail.com>"]
+readme = "README.md"
+license = "MIT"
 
 [dev-dependencies]
 rand = "0.3"
