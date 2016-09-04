@@ -24,6 +24,8 @@ pub enum BlockType {
     Full,
 }
 
+/// The Block is the smallest unit of allocation allowed
+/// It is currently equal to 16 bytes
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub struct Block {

@@ -298,25 +298,37 @@ impl<'a, T> Drop for SliceMutex<'a, T> {
 }
 
 impl<'a, T> SliceMutex<'a, T> {
-    /// see `Mutex.try_lock`
-    pub fn try_lock(&'a self) -> TryLockResult<SliceMutexGuard<T>> {
+    pub fn lock(&'a mut self) -> TryLockResult<SliceMutexGuard<T>> {
         unsafe {
             let pool = &*self.pool.raw;
             let block = pool.index(self.index).block();
             let full = pool.full_mut(block);
-            if full.is_locked() {
-                Err(TryLockError::WouldBlock)
-            } else {
-                full.set_lock();
-                assert!(full.is_locked());
-                Ok(SliceMutexGuard{__lock: self})
-            }
+            assert!(!full.is_locked());
+            full.set_lock();
+            assert!(full.is_locked());
+            Ok(SliceMutexGuard{__lock: self})
         }
     }
+
+    // /// see `Mutex.try_lock`
+    // pub fn try_lock(&'a self) -> TryLockResult<SliceMutexGuard<T>> {
+    //     unsafe {
+    //         let pool = &*self.pool.raw;
+    //         let block = pool.index(self.index).block();
+    //         let full = pool.full_mut(block);
+    //         if full.is_locked() {
+    //             Err(TryLockError::WouldBlock)
+    //         } else {
+    //             full.set_lock();
+    //             assert!(full.is_locked());
+    //             Ok(SliceMutexGuard{__lock: self})
+    //         }
+    //     }
+    // }
 }
 
 pub struct SliceMutexGuard<'a, T: 'a> {
-    __lock: &'a SliceMutex<'a, T>,
+    __lock: &mut 'a SliceMutex<'a, T>,
 }
 
 impl<'a, T: 'a> Drop for SliceMutexGuard<'a, T> {
@@ -389,10 +401,9 @@ fn test_alloc_slice() {
     {
         let alloced = pool.alloc_slice::<u16>(10000);
         let unwrapped_alloc = alloced.unwrap();
-        let locked = unwrapped_alloc.try_lock();
-        let mut unwrapped_locked = locked.unwrap();
+        let locked = unwrapped_alloc.lock();
         {
-            let rmut = unwrapped_locked.deref_mut();
+            let rmut = locked.deref_mut();
             for n in 0..10000 {
                 assert_eq!(rmut[n], 0);
                 rmut[n] = n as u16;

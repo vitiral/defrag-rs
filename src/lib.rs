@@ -54,12 +54,12 @@ mod raw_pool;
 mod pool;
 mod utils;
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 
 pub use types::{Error, Result};
-pub use raw_pool::{Block, RawPool};
+pub use raw_pool::Block;
 pub use pool::{TryLockResult, TryLockError,
                Pool,
                Mutex, MutexGuard,
