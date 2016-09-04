@@ -209,20 +209,16 @@ pub struct Mutex<'a, T> {
     _type: PhantomData<T>,
 }
 
-impl<'a, T> Mutex<'a, T> {
-    /// try to obain a lock on the memory
-    pub fn try_lock(&'a self) -> TryLockResult<MutexGuard<T>> {
+impl<'mutex, T> Mutex<'mutex, T> {
+    pub fn lock<'a>(&'a mut self) -> MutexGuard<'a, 'mutex, T> {
         unsafe {
             let pool = &*self.pool.raw;
             let block = pool.index(self.index).block();
             let full = pool.full_mut(block);
-            if full.is_locked() {
-                Err(TryLockError::WouldBlock)
-            } else {
-                full.set_lock();
-                assert!(full.is_locked());
-                Ok(MutexGuard{__lock: self})
-            }
+            assert!(!full.is_locked());
+            full.set_lock();
+            assert!(full.is_locked());
+            MutexGuard {__lock: self}
         }
     }
 }
@@ -239,12 +235,12 @@ impl<'a, T> Drop for Mutex<'a, T> {
 /// represents memory which can be used.
 /// dropping this unlocks the memory and allows it to be
 /// defragmentated.
-pub struct MutexGuard<'a, T: 'a> {
+pub struct MutexGuard<'a, 'mutex: 'a, T: 'mutex> {
     // Maybe remove this 'a?
-    __lock: &'a Mutex<'a, T>,
+    __lock: &'a Mutex<'mutex, T>,
 }
 
-impl<'a, T: 'a> Drop for MutexGuard<'a, T> {
+impl<'a, 'mutex: 'a, T: 'mutex> Drop for MutexGuard<'a, 'mutex, T> {
     fn drop(&mut self) {
         unsafe {
             let pool = &mut *self.__lock.pool.raw;
@@ -254,7 +250,7 @@ impl<'a, T: 'a> Drop for MutexGuard<'a, T> {
     }
 }
 
-impl<'a, T: 'a> Deref for MutexGuard<'a, T> {
+impl<'a, 'mutex: 'a, T: 'mutex> Deref for MutexGuard<'a, 'mutex, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -266,7 +262,7 @@ impl<'a, T: 'a> Deref for MutexGuard<'a, T> {
     }
 }
 
-impl<'a, T: 'a> DerefMut for MutexGuard<'a, T> {
+impl<'a, 'mutex: 'a, T: 'a> DerefMut for MutexGuard<'a, 'mutex, T> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe {
             let pool = &*self.__lock.pool.raw;
@@ -297,8 +293,8 @@ impl<'a, T> Drop for SliceMutex<'a, T> {
     }
 }
 
-impl<'a, T> SliceMutex<'a, T> {
-    pub fn lock(&'a mut self) -> TryLockResult<SliceMutexGuard<T>> {
+impl<'mutex, T> SliceMutex<'mutex, T> {
+    pub fn lock<'a>(&'a mut self) -> SliceMutexGuard<'a, 'mutex, T> {
         unsafe {
             let pool = &*self.pool.raw;
             let block = pool.index(self.index).block();
@@ -306,32 +302,16 @@ impl<'a, T> SliceMutex<'a, T> {
             assert!(!full.is_locked());
             full.set_lock();
             assert!(full.is_locked());
-            Ok(SliceMutexGuard{__lock: self})
+            SliceMutexGuard {__lock: self}
         }
     }
-
-    // /// see `Mutex.try_lock`
-    // pub fn try_lock(&'a self) -> TryLockResult<SliceMutexGuard<T>> {
-    //     unsafe {
-    //         let pool = &*self.pool.raw;
-    //         let block = pool.index(self.index).block();
-    //         let full = pool.full_mut(block);
-    //         if full.is_locked() {
-    //             Err(TryLockError::WouldBlock)
-    //         } else {
-    //             full.set_lock();
-    //             assert!(full.is_locked());
-    //             Ok(SliceMutexGuard{__lock: self})
-    //         }
-    //     }
-    // }
 }
 
-pub struct SliceMutexGuard<'a, T: 'a> {
-    __lock: &mut 'a SliceMutex<'a, T>,
+pub struct SliceMutexGuard<'a, 'mutex: 'a, T: 'mutex> {
+    __lock: &'a mut SliceMutex<'mutex, T>,
 }
 
-impl<'a, T: 'a> Drop for SliceMutexGuard<'a, T> {
+impl<'a, 'mutex: 'a, T: 'mutex> Drop for SliceMutexGuard<'a, 'mutex, T> {
     fn drop(&mut self) {
         unsafe {
             let pool = &mut *self.__lock.pool.raw;
@@ -341,7 +321,7 @@ impl<'a, T: 'a> Drop for SliceMutexGuard<'a, T> {
     }
 }
 
-impl<'a, T: 'a> Deref for SliceMutexGuard<'a, T> {
+impl<'a, 'mutex: 'a, T: 'mutex> Deref for SliceMutexGuard<'a, 'mutex, T> {
     type Target = [T];
 
     fn deref(&self) -> &[T] {
@@ -349,13 +329,14 @@ impl<'a, T: 'a> Deref for SliceMutexGuard<'a, T> {
             let pool = &*self.__lock.pool.raw;
             let index = &pool.index(self.__lock.index);
             let t: *const T = mem::transmute(pool.data(index.block()));
+            // slice::from_raw_parts::<'a>(t, self.__lock.len as usize)
             slice::from_raw_parts(t, self.__lock.len as usize)
         }
     }
 }
 
 
-impl<'a, T: 'a> DerefMut for SliceMutexGuard<'a, T> {
+impl<'a, 'mutex: 'a, T: 'a> DerefMut for SliceMutexGuard<'a, 'mutex, T> {
     fn deref_mut(&mut self) -> &mut [T] {
         unsafe {
             let pool = &*self.__lock.pool.raw;
@@ -371,46 +352,43 @@ fn test_alloc() {
     let pool = Pool::new(4096, 256).unwrap();
     let expected = 0x01010101;
 
-    let alloced = pool.alloc::<u32>();
-    let unwrapped_alloc = alloced.unwrap();
-    let locked = unwrapped_alloc.try_lock();
-    let mut unwrapped_locked = locked.unwrap();
+    let mut mutex = pool.alloc::<u32>().unwrap();
+    let mut locked = mutex.lock();
 
     {
-        let rmut = unwrapped_locked.deref_mut();
+        let rmut = locked.deref_mut();
         *rmut = expected;
     }
-    assert_eq!(unwrapped_locked.deref(), &expected);
+    assert_eq!(locked.deref(), &expected);
 
     let expected2 = -1000;
-    let alloced2 = pool.alloc::<i64>();
-    let unwrapped_alloc2 = alloced2.unwrap();
-    let locked2 = unwrapped_alloc2.try_lock();
-    let mut unwrapped_locked2 = locked2.unwrap();
+    let mut mutex2 = pool.alloc::<i64>().unwrap();
+    let mut locked2 = mutex2.lock();
     {
-        let rmut = unwrapped_locked2.deref_mut();
+        let rmut = locked2.deref_mut();
         *rmut = expected2;
     }
-    assert_eq!(unwrapped_locked2.deref(), &expected2);
+    assert_eq!(locked2.deref(), &expected2);
 }
 
 #[test]
 fn test_alloc_slice() {
     let pool = Pool::new(4096 * mem::size_of::<Block>(), 256).unwrap();
 
+    let mut mutex = pool.alloc_slice::<u16>(10000).unwrap();
+    let mut slice = mutex.lock();
+    // TODO: make a test that makes sure this doesn't compile
+    // let mut slice2 = mutex.lock();
     {
-        let alloced = pool.alloc_slice::<u16>(10000);
-        let unwrapped_alloc = alloced.unwrap();
-        let locked = unwrapped_alloc.lock();
-        {
-            let rmut = locked.deref_mut();
-            for n in 0..10000 {
-                assert_eq!(rmut[n], 0);
-                rmut[n] = n as u16;
-            }
+        let rmut = slice.deref_mut();
+        for n in 0..10000 {
+            assert_eq!(rmut[n], 0);
+            rmut[n] = n as u16;
         }
+    }
 
-        let r = unwrapped_locked.deref_mut();
+    {
+        let r = slice.deref_mut();
         for n in 0..10000 {
             assert_eq!(r[n], n as u16);
         }
