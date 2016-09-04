@@ -1,6 +1,6 @@
 The MIT License (MIT)
 
-defrag: fragmentation-free memory manager for microcontrollers
+defrag: safe and efficient memory manager for microcontrollers
 
 Copyright (c) 2016 Garrett Berg, vitiral@gmail.com
 
