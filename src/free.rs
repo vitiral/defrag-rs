@@ -1,8 +1,12 @@
+#[cfg(test)] use std::vec::Vec;
+#[cfg(test)] use std::iter::FromIterator;
+
 use core::default::Default;
 use core::fmt;
+use core::mem;
 
 use super::types::*;
-use super::raw_pool::RawPool;
+use super::raw_pool::*;
 
 // ##################################################
 // # Free
@@ -100,8 +104,10 @@ impl Free {
                 p._next = self.block();
             }
             None => {
+                self._prev = BLOCK_NULL;
                 let pool = pool as *mut RawPool;
-                (*pool).freed_bins.insert(&mut *pool, self);
+                let bin = (*pool).freed_bins.get_insert_bin(self.blocks());
+                (*pool).freed_bins.bins[bin as usize]._root = self.block();
             }
         }
     }
@@ -149,9 +155,16 @@ impl Free {
             Some(p) => p.set_next(get_freed(&mut *poolp, self.next())),
             None => {
                 // it is the first item in a bin so it needs to remove itself
-                let bin = (*poolp).freed_bins.get_insert_bin(self.blocks());
-                assert_eq!((*poolp).freed_bins.bins[bin as usize]._root, self.block());
-                (*poolp).freed_bins.bins[bin as usize]._root = self._next;
+                let bin = pool.freed_bins.get_insert_bin(self.blocks());
+                match get_freed(&mut *poolp, self.next()) {
+                    Some(next) => {
+                        next.set_prev(&mut *poolp, None);
+                        assert_eq!(pool.freed_bins.bins[bin as usize]._root, next.block());
+                    },
+                    None => {
+                        pool.freed_bins.bins[bin as usize]._root = BLOCK_NULL;
+                    }
+                }
             }
         }
     }
@@ -180,6 +193,95 @@ impl Free {
     }
 }
 
+#[test]
+/// free has the capability of causing a lot of bugs if done
+/// incorrectly. It's functionality must be completely
+/// tested.
+fn test_free() {
+    unsafe {
+        let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = (
+            [Index::default(); 256], mem::zeroed());
+        let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
+        let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
+
+        let mut pool = RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc);
+        let p = &mut pool as *mut RawPool;
+
+        // ok, we are completely ignoring bins for this, set everything
+        // up manaually
+        let f1 = pool.freed_mut(0);
+        let f2 = pool.freed_mut(10);
+        let f3 = pool.freed_mut(20);
+        let f4 = pool.freed_mut(25);
+
+        f1._block = 0;
+        f1._blocks = 10;
+        assert_eq!(f1.block(), 0);
+        assert_eq!(f1.blocks(), 10);
+
+        f2._block = 10;
+        f2._blocks = 10;
+        assert_eq!(f2.block(), 10);
+        assert_eq!(f2.blocks(), 10);
+
+        f3._block = 20;
+        f3._blocks = 5;
+        assert_eq!(f3.block(), 20);
+        assert_eq!(f3.blocks(), 5);
+
+        f4._block = 25;
+        f4._blocks = 2;
+        assert_eq!(f4.block(), 25);
+        assert_eq!(f4.blocks(), 2);
+
+        (*p).heap_block = 27;
+        (*p).freed_bins.len = 4;
+
+        // set things one by one and check them
+        // f3 -> f1 -> f2 -> f4
+        f3._prev = BLOCK_NULL;
+        f3.set_next(Some(f1));
+        assert_eq!(f3.prev(), None);
+        assert_eq!(f3.next(), Some(f1.block()));
+        assert_eq!(f1.prev(), Some(f3.block()));
+
+        f1.set_next(Some(f2));
+        assert_eq!(f1.next(), Some(f2.block()));
+        assert_eq!(f2.prev(), Some(f1.block()));
+
+        f2.set_next(Some(f4));
+        assert_eq!(f2.next(), Some(f4.block()));
+        assert_eq!(f4.prev(), Some(f2.block()));
+
+        f4.set_next(None);
+        assert_eq!(f4.next(), None);
+
+        // just double check that these didn't change...
+        assert_eq!(f3.prev(), None);
+        assert_eq!(f3.next(), Some(f1.block()));
+        assert_eq!(f1.prev(), Some(f3.block()));
+        assert_eq!(f1.next(), Some(f2.block()));
+        assert_eq!(f2.prev(), Some(f1.block()));
+        assert_eq!(f2.next(), Some(f4.block()));
+        assert_eq!(f4.prev(), Some(f2.block()));
+
+        // test remove... without using bins (so only middle)
+        f1.remove(&mut *p);
+        assert_eq!((*p).freed_bins.len, 3);
+        assert_eq!(f3.next(), Some(f2.block()));
+        assert_eq!(f2.prev(), Some(f3.block()));
+
+        f2.remove(&mut *p);
+        assert_eq!((*p).freed_bins.len, 2);
+        assert_eq!(f3.next(), Some(f4.block()));
+        assert_eq!(f4.prev(), Some(f3.block()));
+
+        f4.remove(&mut *p);
+        assert_eq!((*p).freed_bins.len, 1);
+        assert_eq!(f3.next(), None);
+        assert_eq!(f3.prev(), None);
+    }
+}
 
 // ##################################################
 // # Freed Bins and Root
@@ -224,7 +326,6 @@ impl FreedRoot {
         }
         self._root = freed.block();
     }
-
 }
 
 pub const NUM_BINS: u8 = 7;
@@ -268,7 +369,6 @@ impl FreedBins {
     /// this is the only method that Pool uses to store deallocated indexes
     pub unsafe fn insert(&mut self, pool: &mut RawPool, freed: &mut Free) {
         assert!(freed.block() + freed.blocks() <= pool.heap_block, "{:?}", freed);
-        // assert!(freed.blocks() < pool.blocks_used);
         self.len += 1;
         let bin = self.get_insert_bin(freed.blocks());
         self.bins[bin as usize].insert_root(pool, freed);
@@ -355,5 +455,79 @@ impl FreedBins {
             self.insert(pool, &mut *new_freed);
         }
     }
-
 }
+
+
+#[test]
+fn test_bins() {
+    unsafe {
+        let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = (
+            [Index::default(); 256], mem::zeroed());
+        let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
+        let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
+
+        let mut pool = RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc);
+        let p = &mut pool as *mut RawPool;
+
+        // allocate and free through normal process
+        let bin1 = Vec::from_iter(
+            (0..5).map(|_| pool.alloc_index(10).unwrap()));
+        let bin1_blocks: Vec<_> = bin1.iter().map(|i| pool.index(*i).block()).collect();
+
+        let bin2 = Vec::from_iter(
+            (0..5).map(|_| pool.alloc_index(20).unwrap()));
+        pool.alloc_index(1).unwrap();
+
+        for (i1, i2) in bin1.iter().zip(bin2.iter()) {
+            pool.dealloc_index(*i2);
+            pool.dealloc_index(*i1);
+        }
+
+        assert_eq!(pool.freed_bins.len, 10);
+
+        // go through bin1, asserting that it makes sense
+        let bin1_freed: Vec<_> = bin1_blocks.iter().map(|b| (*p).freed_mut(*b)).collect();
+        let b1_0 = pool.freed_mut(0);
+        let b1_1 = pool.freed_mut(10);
+        let b1_2 = pool.freed_mut(20);
+        let b1_3 = pool.freed_mut(30);
+        let b1_4 = pool.freed_mut(40);
+
+        // bins are a first in / last out buffer
+        assert_eq!(pool.freed_bins.bins[1]._root, b1_4.block());
+        assert_eq!(b1_4.prev(), None);
+        assert_eq!(b1_4.next(), Some(b1_3.block()));
+
+        assert_eq!(b1_3.prev(), Some(b1_4.block()));
+        assert_eq!(b1_3.next(), Some(b1_2.block()));
+
+        assert_eq!(b1_2.prev(), Some(b1_3.block()));
+        assert_eq!(b1_2.next(), Some(b1_1.block()));
+
+        assert_eq!(b1_1.prev(), Some(b1_2.block()));
+        assert_eq!(b1_1.next(), Some(b1_0.block()));
+
+        assert_eq!(b1_0.prev(), Some(b1_1.block()));
+        assert_eq!(b1_0.next(), None);
+
+        // test remove
+        b1_4.remove(&mut *p);
+        assert_eq!(pool.freed_bins.len, 9);
+        assert_eq!(pool.freed_bins.bins[1]._root, b1_3.block());
+        assert_eq!(b1_3.prev(), None);
+        assert_eq!(b1_3.next(), Some(b1_2.block()));
+
+        // re-insert, everything should go back to same as before
+        (*p).freed_bins.insert(&mut *p, b1_4);
+        assert_eq!(pool.freed_bins.len, 10);
+        assert_eq!(pool.freed_bins.bins[1]._root, b1_4.block());
+        assert_eq!(b1_4.prev(), None);
+        assert_eq!(b1_4.next(), Some(b1_3.block()));
+        assert_eq!(b1_3.prev(), Some(b1_4.block()));
+        assert_eq!(b1_3.next(), Some(b1_2.block()));
+
+        // test join
+
+    }
+}
+

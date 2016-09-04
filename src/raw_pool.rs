@@ -632,7 +632,8 @@ fn test_basic() {
 /// test using raw indexes
 fn test_indexes() {
     unsafe {
-        let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = ([Index::default(); 256], mem::zeroed());
+        let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = (
+            [Index::default(); 256], mem::zeroed());
         let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
         let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
 
