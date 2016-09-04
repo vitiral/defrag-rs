@@ -210,7 +210,19 @@ pub struct Mutex<'a, T> {
 }
 
 impl<'mutex, T> Mutex<'mutex, T> {
-    pub fn lock<'a>(&'a mut self) -> MutexGuard<'a, 'mutex, T> {
+    /**
+    get a usable value, locking the underlying memory from being
+    used
+
+    While the memory is locked, it cannot be moved which means
+    that defragmentation is not as efficient as possible.
+    It is recommended to `drop` the returned `Value` as soon
+    as possible (i.e. let it go out of scope)
+
+    Note that currently, Mutex can only exist in a single thread
+    which means that `lock` is always non-blocking.
+    */
+    pub fn lock<'a>(&'a mut self) -> Value<'a, 'mutex, T> {
         unsafe {
             let pool = &*self.pool.raw;
             let block = pool.index(self.index).block();
@@ -218,7 +230,7 @@ impl<'mutex, T> Mutex<'mutex, T> {
             assert!(!full.is_locked());
             full.set_lock();
             assert!(full.is_locked());
-            MutexGuard {__lock: self}
+            Value {__lock: self}
         }
     }
 }
@@ -232,15 +244,19 @@ impl<'a, T> Drop for Mutex<'a, T> {
 }
 
 
-/// represents memory which can be used.
-/// dropping this unlocks the memory and allows it to be
-/// defragmentated.
-pub struct MutexGuard<'a, 'mutex: 'a, T: 'mutex> {
-    // Maybe remove this 'a?
+/**
+A value which can be used through `Deref`
+
+When this is dropped, the memory it is referencing
+is automatically unlocked, which allows it to be
+defragmented. This object should be dropped as
+soon as possible to allow for defragmentation.
+*/
+pub struct Value<'a, 'mutex: 'a, T: 'mutex> {
     __lock: &'a Mutex<'mutex, T>,
 }
 
-impl<'a, 'mutex: 'a, T: 'mutex> Drop for MutexGuard<'a, 'mutex, T> {
+impl<'a, 'mutex: 'a, T: 'mutex> Drop for Value<'a, 'mutex, T> {
     fn drop(&mut self) {
         unsafe {
             let pool = &mut *self.__lock.pool.raw;
@@ -250,7 +266,7 @@ impl<'a, 'mutex: 'a, T: 'mutex> Drop for MutexGuard<'a, 'mutex, T> {
     }
 }
 
-impl<'a, 'mutex: 'a, T: 'mutex> Deref for MutexGuard<'a, 'mutex, T> {
+impl<'a, 'mutex: 'a, T: 'mutex> Deref for Value<'a, 'mutex, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -262,7 +278,7 @@ impl<'a, 'mutex: 'a, T: 'mutex> Deref for MutexGuard<'a, 'mutex, T> {
     }
 }
 
-impl<'a, 'mutex: 'a, T: 'a> DerefMut for MutexGuard<'a, 'mutex, T> {
+impl<'a, 'mutex: 'a, T: 'a> DerefMut for Value<'a, 'mutex, T> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe {
             let pool = &*self.__lock.pool.raw;
@@ -275,9 +291,7 @@ impl<'a, 'mutex: 'a, T: 'a> DerefMut for MutexGuard<'a, 'mutex, T> {
 // ##################################################
 // # Slice Mutex
 
-/// same as `Mutex` except wrapps a slice
-///
-/// see: https://doc.rust-lang.org/std/slice/
+/// same as `Mutex` except wrapps a `Slice`
 pub struct SliceMutex<'a, T> {
     index: IndexLoc,
     pool: &'a Pool,
@@ -294,7 +308,13 @@ impl<'a, T> Drop for SliceMutex<'a, T> {
 }
 
 impl<'mutex, T> SliceMutex<'mutex, T> {
-    pub fn lock<'a>(&'a mut self) -> SliceMutexGuard<'a, 'mutex, T> {
+    /**
+    get a usable slice, locking the underlying memory from being
+    used
+
+    See `Mutex.lock`
+     */
+    pub fn lock<'a>(&'a mut self) -> Slice<'a, 'mutex, T> {
         unsafe {
             let pool = &*self.pool.raw;
             let block = pool.index(self.index).block();
@@ -302,16 +322,22 @@ impl<'mutex, T> SliceMutex<'mutex, T> {
             assert!(!full.is_locked());
             full.set_lock();
             assert!(full.is_locked());
-            SliceMutexGuard {__lock: self}
+            Slice {__lock: self}
         }
     }
 }
 
-pub struct SliceMutexGuard<'a, 'mutex: 'a, T: 'mutex> {
+/**
+A [`slice`](https://doc.rust-lang.org/std/slice) which
+can be used through `Deref`
+
+See `Value`
+*/
+pub struct Slice<'a, 'mutex: 'a, T: 'mutex> {
     __lock: &'a mut SliceMutex<'mutex, T>,
 }
 
-impl<'a, 'mutex: 'a, T: 'mutex> Drop for SliceMutexGuard<'a, 'mutex, T> {
+impl<'a, 'mutex: 'a, T: 'mutex> Drop for Slice<'a, 'mutex, T> {
     fn drop(&mut self) {
         unsafe {
             let pool = &mut *self.__lock.pool.raw;
@@ -321,7 +347,7 @@ impl<'a, 'mutex: 'a, T: 'mutex> Drop for SliceMutexGuard<'a, 'mutex, T> {
     }
 }
 
-impl<'a, 'mutex: 'a, T: 'mutex> Deref for SliceMutexGuard<'a, 'mutex, T> {
+impl<'a, 'mutex: 'a, T: 'mutex> Deref for Slice<'a, 'mutex, T> {
     type Target = [T];
 
     fn deref(&self) -> &[T] {
@@ -336,7 +362,7 @@ impl<'a, 'mutex: 'a, T: 'mutex> Deref for SliceMutexGuard<'a, 'mutex, T> {
 }
 
 
-impl<'a, 'mutex: 'a, T: 'a> DerefMut for SliceMutexGuard<'a, 'mutex, T> {
+impl<'a, 'mutex: 'a, T: 'a> DerefMut for Slice<'a, 'mutex, T> {
     fn deref_mut(&mut self) -> &mut [T] {
         unsafe {
             let pool = &*self.__lock.pool.raw;

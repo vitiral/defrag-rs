@@ -75,26 +75,18 @@ impl Tracker {
 struct Allocation<'a> {
     i: usize,
     pool: &'a Pool,
-    // settings: &'a Tracker,
     data: Vec<Fill>,
     mutex: Option<super::SliceMutex<'a, Fill>>,
-    // time: TIME,
 }
 
 impl<'a> Allocation<'a> {
-    fn assert_valid(&self) -> TResult<()> {
+    fn assert_valid(&mut self) -> TResult<()> {
         let mutex = match self.mutex {
-            Some(ref m) => m,
+            Some(ref mut m) => m,
             None => return Ok(()),
         };
         let ref sdata = self.data;
-        let pdata = match mutex.try_lock() {
-            Ok(l) => l,
-            Err(e) => {
-                println!("{}", self.pool.display());
-                panic!("error trying lock: {:?}", e);
-            }
-        };
+        let pdata = mutex.lock();
 
         if sdata.len() != pdata.len() {
             return Err(format!("lengths not equal: {} != {}", sdata.len(), pdata.len()));
@@ -110,11 +102,11 @@ impl<'a> Allocation<'a> {
     /// fill the Allocation up with data, don't check
     fn fill(&mut self, t: &mut Tracker) -> Result<()> {
         let mutex = match self.mutex {
-            Some(ref m) => m,
+            Some(ref mut m) => m,
             None => return Ok(()),
         };
         let edata = &mut self.data;
-        let mut pdata = mutex.try_lock().unwrap();
+        let mut pdata = mutex.lock();
         for (i, (e, p)) in edata.iter_mut().zip(pdata.iter_mut()).enumerate() {
             let val = t.gen.gen::<Fill>();
             *e = val;
