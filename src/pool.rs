@@ -160,24 +160,33 @@ impl Pool {
     }
 
 
+    /// call this to be able to printout the status
+    /// of the `Pool`
     pub fn display(&self) -> DisplayPool {
         unsafe {
             (*self.raw).display()
         }
     }
 
+    /// clean the `Pool`, combining contigous blocks
+    /// of free memory
     pub fn clean(&self) {
         unsafe { (*self.raw).clean() }
     }
 
+    /// defragment the `Pool`, combining blocks of
+    /// used memory and increasing the size of the
+    /// heap
     pub fn defrag(&self) {
         unsafe { (*self.raw).defrag() }
     }
 
+    /// get the total size of the `Pool` in bytes
     pub fn size(&self) -> usize {
         unsafe { (*self.raw).size() }
     }
 
+    /// get the total number of indexes in the `Pool`
     pub fn len_indexes(&self) -> IndexLoc {
         unsafe { (*self.raw).len_indexes() }
     }
