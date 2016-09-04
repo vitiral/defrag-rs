@@ -350,6 +350,7 @@ fn test_alloc() {
     let unwrapped_alloc = alloced.unwrap();
     let locked = unwrapped_alloc.try_lock();
     let mut unwrapped_locked = locked.unwrap();
+
     {
         let rmut = unwrapped_locked.deref_mut();
         *rmut = expected;

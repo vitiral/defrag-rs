@@ -66,6 +66,7 @@ impl Block {
     pub unsafe fn next_mut(&mut self, pool: &RawPool) -> Option<&mut Block> {
         let block = self.block(pool);
         let blocks = self.blocks();
+        // println!(" * next: block={}, blocks={}", block, blocks);
         if block + blocks == pool.heap_block {
             None
         } else {
@@ -443,6 +444,7 @@ impl RawPool {
                         let i = full.index();
                         let blocks = full.blocks();
                         let mut free_tmp = (**free).clone();
+                        let prev_free_block = free_tmp.block();
                         let fullptr = full as *mut Full as *mut Block;
 
                         // perform the move of the data
@@ -454,7 +456,7 @@ impl RawPool {
                         // to update the static Index's data
                         (*poolptr).index_mut(i)._block = free_tmp.block();
 
-                        // update the free block's location and get it
+                        // update the free block's location
                         free_tmp._block += blocks;
 
                         // update the items pointing TO free
@@ -466,6 +468,7 @@ impl RawPool {
                                 let freed_bins = &mut (*poolptr).freed_bins;
                                 let bin = freed_bins.get_insert_bin(
                                     free_tmp.blocks());
+                                assert_eq!(freed_bins.bins[bin as usize]._root, prev_free_block);
                                 freed_bins.bins[bin as usize]._root = free_tmp.block();
                             }
                         }
@@ -474,7 +477,7 @@ impl RawPool {
                         }
 
                         // actually store the new free in pool._blocks
-                        let new_free_loc = (*poolptr).freed_mut(free_tmp._block);
+                        let new_free_loc = (*poolptr).freed_mut(free_tmp.block());
                         *new_free_loc = free_tmp;
 
                         // println!("new free: {:?}", new_free_loc);

@@ -150,6 +150,7 @@ impl Free {
             None => {
                 // it is the first item in a bin so it needs to remove itself
                 let bin = (*poolp).freed_bins.get_insert_bin(self.blocks());
+                assert_eq!((*poolp).freed_bins.bins[bin as usize]._root, self.block());
                 (*poolp).freed_bins.bins[bin as usize]._root = self._next;
             }
         }
@@ -266,7 +267,7 @@ impl FreedBins {
     /// insert a Free block into a freed bin
     /// this is the only method that Pool uses to store deallocated indexes
     pub unsafe fn insert(&mut self, pool: &mut RawPool, freed: &mut Free) {
-        assert!(freed.block() + freed.blocks() < pool.heap_block);
+        assert!(freed.block() + freed.blocks() <= pool.heap_block, "{:?}", freed);
         // assert!(freed.blocks() < pool.blocks_used);
         self.len += 1;
         let bin = self.get_insert_bin(freed.blocks());
@@ -327,7 +328,7 @@ impl FreedBins {
     /// and removes it from being tracked by the Bins. It then tracks whatever
     /// was left of it.
     ///
-    /// After perforing this operation, the information stored in `freed` is completely invalid.
+    /// After performing this operation, the information stored in `freed` is completely invalid.
     /// This includes it's blocks-size, block-location as well as `prev` and `next` fields. It
     /// is the responsibility of the user to set the information to be valid.
     unsafe fn consume_partof(&mut self, pool: &mut RawPool, freed: &mut Free, blocks: BlockLoc) {
@@ -339,6 +340,7 @@ impl FreedBins {
             freed.remove(pool);
         } else {
             // use only the size that is needed, so append a new freed block
+            assert!(old_blocks > blocks);
             let old_block = freed.block();
             let new_block = old_block + blocks;
             let new_freed = pool.freed_mut(new_block)
@@ -353,4 +355,5 @@ impl FreedBins {
             self.insert(pool, &mut *new_freed);
         }
     }
+
 }

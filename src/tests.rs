@@ -45,6 +45,7 @@ impl panic::UnwindSafe for Pool {}
 
 #[derive(Debug, Default)]
 struct Stats {
+    loops: usize,
     allocs: usize,
     frees: usize,
     cleans: usize,
@@ -202,7 +203,27 @@ impl<'a> Allocation<'a> {
 }
 
 
-fn do_test(pool: &mut Pool) -> Tracker {
+fn do_test(pool: &Pool, allocs: &mut Vec<Allocation>, track: &mut Tracker) {
+    println!("len allocs: {}", allocs.len());
+    println!("some random values: {}, {}, {}",
+             track.gen.gen::<u16>(), track.gen.gen::<u16>(), track.gen.gen::<u16>());
+    track.test_clock.start();
+    for _ in 0..1000 {
+        for alloc in allocs.iter_mut() {
+            alloc.do_random(track).unwrap();
+        }
+        track.stats.loops += 1;
+    }
+    track.test_clock.stop();
+}
+
+// #[test]
+fn test_it() {
+    // let blocks = u16::max_value() / 4;
+    let blocks = 4096 * 4;
+    let size = blocks as usize * mem::size_of::<Block>();
+    let len_indexes = blocks / 128;
+    let mut pool = Pool::new(size, len_indexes).expect("can't get pool");
     let mut allocs = Vec::from_iter(
         (0..pool.len_indexes())
             .map(|i| Allocation {
@@ -211,39 +232,19 @@ fn do_test(pool: &mut Pool) -> Tracker {
                 data: Vec::new(),
                 mutex: None,
             }));
-    println!("len allocs: {}", allocs.len());
     let mut track = Tracker::new();
-    println!("some random values: {}, {}, {}",
-             track.gen.gen::<u16>(), track.gen.gen::<u16>(), track.gen.gen::<u16>());
-    track.test_clock.start();
-    for _ in 0..1000 {
-        for alloc in allocs.iter_mut() {
-            alloc.do_random(&mut track).unwrap();
-        }
-    }
-    track.test_clock.stop();
-    track
-}
-
-#[test]
-fn test_it() {
-    let len_indexes = u16::max_value() / 10;
-    let size = (u16::max_value() as usize * mem::size_of::<Block>()) / 4;
-    let mut pool = Pool::new(size, len_indexes).expect("can't get pool");
-    let res = panic::catch_unwind(panic::AssertUnwindSafe(|| do_test(&mut pool)));
-    let track = match res {
-        Ok(t) => t,
-        Err(e) => {
-            println!("{}", pool.display());
-            thread::sleep_ms(200);
-            panic::resume_unwind(e);
-        }
-    };
-    // maxed out blocks, 1/10 max indexes
+    let res = panic::catch_unwind(panic::AssertUnwindSafe(
+        || do_test(&pool, &mut allocs, &mut track)));
     println!("{}", pool.display());
     println!("TIMES: test={}ms, pool={}ms",
              track.test_clock.elapsed_ms(),
              track.clock.elapsed_ms());
     println!("STATS: {:?}", track.stats);
-
+    match res {
+        Ok(_) => {},
+        Err(e) => {
+            panic::resume_unwind(e);
+        }
+    };
+    // maxed out blocks, 1/10 max indexes
 }
