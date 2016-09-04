@@ -6,25 +6,17 @@ use super::free::*;
 pub unsafe fn base_clean(pool: &mut RawPool,
                          full_fn: &Fn(&mut RawPool, Option<*mut Free>, &mut Full)
                                       -> Option<*mut Free>) {
-    // println!("### Starting a base clean");
     let poolptr = pool as *mut RawPool;
     let mut block_maybe = (*poolptr).first_block();
     let mut last_freed: Option<*mut Free> = None;
     while let Some(mut block) = block_maybe {
-        // println!("{}", pool.display());
-        // match last_freed {
-        //     Some(ref last) => println!("utils: last={:?}", **last),
-        //     None => println!("utils: last=None"),
-        // }
         last_freed = match (*block).ty() {
             BlockType::Free => {
                 let free = (*block).as_free_mut();
-                // println!("  block={:>3} {:?}", (*block).block(pool), free);
                 match last_freed {
                     Some(ref last) => {
                         // combines the last with the current
                         // and set last_freed to the new value
-                        // println!("joining {:?} with {:?}", **last, free);
                         Some((**last).join(pool, free))
                     },
                     None => {
@@ -36,7 +28,6 @@ pub unsafe fn base_clean(pool: &mut RawPool,
             },
             BlockType::Full => {
                 let full = (*block).as_full_mut();
-                // println!("  block={:?}", full);
                 last_freed = full_fn(pool, last_freed, full);
                 if let Some(ref last) = last_freed {
                     // data was swapped, last freed is already the "next" block

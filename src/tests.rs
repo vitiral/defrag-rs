@@ -126,7 +126,9 @@ impl<'a> Allocation<'a> {
     /// allocate some new data and fill it
     fn alloc(&mut self, t: &mut Tracker) -> TResult<()> {
         assert!(self.mutex.is_none());
-        let len = t.gen.gen::<u16>() / 100;
+        let divider = self.pool.size() /
+            (mem::size_of::<Fill>() * 64);
+        let len = t.gen.gen::<u16>() % divider as u16;
         t.clock.start();
         let slice = self.pool.alloc_slice::<Fill>(len);
         t.clock.stop();
@@ -191,8 +193,8 @@ impl<'a> Allocation<'a> {
             },
             // there is no data, should we allocate it?
             None => {
-                match t.gen.gen::<usize>() % 90 {
-                    0...3 => try!(self.alloc(t)),
+                match t.gen.gen::<usize>() % 100 {
+                    0...50 => try!(self.alloc(t)),
                     _ => {},
                 }
             },
@@ -208,7 +210,7 @@ fn do_test(pool: &Pool, allocs: &mut Vec<Allocation>, track: &mut Tracker) {
     println!("some random values: {}, {}, {}",
              track.gen.gen::<u16>(), track.gen.gen::<u16>(), track.gen.gen::<u16>());
     track.test_clock.start();
-    for _ in 0..100 {
+    for _ in 0..1000 {
         for alloc in allocs.iter_mut() {
             alloc.do_random(track).unwrap();
         }
@@ -219,10 +221,9 @@ fn do_test(pool: &Pool, allocs: &mut Vec<Allocation>, track: &mut Tracker) {
 
 #[test]
 fn test_it() {
-    let blocks = u16::max_value() / 4;
-    // let blocks = 4096 * 4;
+    let blocks = u16::max_value() / 2;
     let size = blocks as usize * mem::size_of::<Block>();
-    let len_indexes = blocks / 10;
+    let len_indexes = blocks / 128;
     let mut pool = Pool::new(size, len_indexes).expect("can't get pool");
     let mut allocs = Vec::from_iter(
         (0..pool.len_indexes())

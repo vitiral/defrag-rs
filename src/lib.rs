@@ -3,13 +3,12 @@
 #![feature(heap_api)]
 #![feature(const_fn)]
 
-// #![no_std]
-extern crate core;
+#![no_std]
 
 // test utilities
-// #[cfg(test)]
-// #[macro_use] extern crate std;
-// #[cfg(test)] use std::prelude::*;
+#[cfg(test)]
+#[macro_use] extern crate std;
+#[cfg(test)] use std::prelude::*;
 #[cfg(test)] extern crate rand;
 #[cfg(test)] extern crate stopwatch;
 

@@ -174,6 +174,10 @@ impl Pool {
         unsafe { (*self.raw).defrag() }
     }
 
+    pub fn size(&self) -> usize {
+        unsafe { (*self.raw).size() }
+    }
+
     pub fn len_indexes(&self) -> IndexLoc {
         unsafe { (*self.raw).len_indexes() }
     }
