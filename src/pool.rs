@@ -5,6 +5,7 @@ use core::marker::PhantomData;
 use core::mem;
 use core::slice;
 
+use cbuf::CBuf;
 use alloc::heap;
 
 use super::types::{Result, Error, IndexLoc, BlockLoc};
@@ -89,12 +90,24 @@ impl Pool {
                 return Err(Error::OutOfMemory);
             }
 
+            let cache_len = 10;
+            let size_cache = cache_len * mem::size_of::<IndexLoc>();
+            let cache = heap::allocate(size_cache, align);
+            if cache.is_null() {
+                panic!("woo!");
+            }
+
             let pool = pool as *mut RawPool;
             let indexes = indexes as *mut Index;
             let blocks = blocks as *mut Block;
+            let cache = cache as *mut IndexLoc;
+
+            let cache_slice: &'static mut [IndexLoc] = slice::from_raw_parts_mut(
+                cache, cache_len as usize);
+            let mut index_cache = CBuf::new(cache_slice);
 
             // initialize our memory and return
-            *pool = RawPool::new(indexes, num_indexes, blocks, num_blocks as u16);
+            *pool = RawPool::new(indexes, num_indexes, blocks, num_blocks as u16, index_cache);
             Ok(Pool::from_raw(pool))
         }
     }

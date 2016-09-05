@@ -46,7 +46,7 @@ various strategies for utilzing freed blocks of memory.
 #[cfg(test)] extern crate stopwatch;
 
 extern crate alloc;
-
+extern crate cbuf;
 
 mod types;
 mod free;

@@ -2,9 +2,15 @@
 name = "defrag"
 version = "0.1.1"
 dependencies = [
+ "dpc-cbuf 0.0.1 (git+https://github.com/vitiral/cbuf-rs)",
  "rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "stopwatch 0.0.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
+
+[[package]]
+name = "dpc-cbuf"
+version = "0.0.1"
+source = "git+https://github.com/vitiral/cbuf-rs#01837ed6beabee26ce802e9d03720097ea65fb5e"
 
 [[package]]
 name = "libc"
@@ -99,6 +105,7 @@ dependencies = [
 ]
 
 [metadata]
+"checksum dpc-cbuf 0.0.1 (git+https://github.com/vitiral/cbuf-rs)" = "<none>"
 "checksum libc 0.2.15 (registry+https://github.com/rust-lang/crates.io-index)" = "23e3757828fa702a20072c37ff47938e9dd331b92fac6e223d26d4b7a55f7ee2"
 "checksum num 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)" = "5a9699207fab8b02bd0e56f8f06fee3f26d640303130de548898b4c9704f6d01"
 "checksum num-bigint 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)" = "88b14378471f7c2adc5262f05b4701ef53e8da376453a8d8fee48e51db745e49"
