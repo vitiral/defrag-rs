@@ -377,7 +377,8 @@ impl RawPool {
             // we couldn't find enough contiguous memory (even though it exists)
             // i.e. we are too fragmented
             self.last_index_used = prev_used_index;
-            return Err(Error::Fragmented)
+            self.index_cache.put(i);
+            return Err(Error::Fragmented);
         };
         // set the index data
         {
@@ -401,6 +402,7 @@ impl RawPool {
         // get the size and location from the Index and clear it
         let block = self.index(i).block();
         *self.index_mut(i) = Index::default();
+        self.index_cache.put(i);  // ignore failure
 
         // start setting up freed
         let freed = self.freed_mut(block) as *mut Free;
@@ -583,7 +585,15 @@ impl RawPool {
 
     /// get an unused index
     fn get_unused_index(&mut self) -> Result<IndexLoc> {
-        // TODO: this is currently pretty slow, maybe cache freed indexes?
+        if self.indexes_remaining() == 0 {
+            return Err(Error::OutOfIndexes);
+        }
+
+        match self.index_cache.get() {
+            Some(i) => return Ok(i),
+            None => {},
+        }
+
         let mut i = (self.last_index_used + 1) % self.len_indexes();
         while i != self.last_index_used {
             if unsafe{self.index(i)._block} == BLOCK_NULL {
@@ -592,7 +602,7 @@ impl RawPool {
             }
             i = (i + 1) % self.len_indexes();
         }
-        Err(Error::OutOfIndexes)
+        unreachable!();
     }
 
     /// get a freed value from the freed bins
@@ -635,150 +645,160 @@ fn test_basic() {
     assert_eq!(f.blocks(), 42);
 }
 
-// #[test]
-// /// test using raw indexes
-// fn test_indexes() {
-//     unsafe {
-//         let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = (
-//             [Index::default(); 256], mem::zeroed());
-//         let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
-//         let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
+#[test]
+/// test using raw indexes
+fn test_indexes() {
+    use core::slice;
+    unsafe {
+        let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = (
+            [Index::default(); 256], mem::zeroed());
+        let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
+        let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
 
-//         let mut pool = RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc);
+        let mut cptr = [IndexLoc::default(); 10];
+        let cache_buf: &'static mut [IndexLoc] = slice::from_raw_parts_mut(
+            &mut cptr[0] as *mut IndexLoc, 10);
+        let cache = CBuf::new(cache_buf);
 
-//         assert_eq!(pool.get_unused_index().unwrap(), 0);
-//         assert_eq!(pool.get_unused_index().unwrap(), 1);
-//         assert_eq!(pool.get_unused_index().unwrap(), 2);
-//         let mut times_allocated = 3;
-//         let mut used_indexes = 0;
-//         let mut blocks_allocated = 0;
+        let mut pool = RawPool::new(
+            iptr, indexes.len() as IndexLoc,
+            bptr, blocks.len() as BlockLoc,
+            cache);
 
-//         // allocate an index
-//         println!("allocate 1");
-//         assert_eq!(pool.freed_bins.len, 0);
-//         let i = pool.alloc_index(4).unwrap();
-//         times_allocated += 1;
-//         assert_eq!(i, times_allocated - 1);
-//         let block;
-//         {
-//             let index = (*(&pool as *const RawPool)).index(i);
-//             assert_eq!(index._block, 0);
-//             block = index.block();
-//             assert_eq!(pool.full(index.block()).blocks(), 4);
-//             assert_eq!(pool.full(index.block())._blocks, BLOCK_HIGH_BIT | 4);
-//         }
+        assert_eq!(pool.get_unused_index().unwrap(), 0);
+        assert_eq!(pool.get_unused_index().unwrap(), 1);
+        assert_eq!(pool.get_unused_index().unwrap(), 2);
+        let mut indexes_allocated = 3;
+        let mut used_indexes = 0;
+        let mut blocks_allocated = 0;
 
-//         // allocate another index and then free it, to show that the heap
-//         // just automatically get's reclaimed
-//         assert_eq!(pool.freed_bins.len, 0);
-//         let tmp_i = pool.alloc_index(100).unwrap();
-//         times_allocated += 1;
-//         pool.dealloc_index(tmp_i);
-//         assert_eq!(pool.freed_bins.len, 0);
-//         assert_eq!(pool.heap_block, 4);
-//         assert_eq!(pool.blocks_used, 4);
+        // allocate an index
+        println!("allocate 1");
+        assert_eq!(pool.freed_bins.len, 0);
+        let i = pool.alloc_index(4).unwrap();
+        indexes_allocated += 1;
+        assert_eq!(i, indexes_allocated - 1);
+        let block;
+        {
+            let index = (*(&pool as *const RawPool)).index(i);
+            assert_eq!(index._block, 0);
+            block = index.block();
+            assert_eq!(pool.full(index.block()).blocks(), 4);
+            assert_eq!(pool.full(index.block())._blocks, BLOCK_HIGH_BIT | 4);
+        }
 
-//         // allocate an index so that the deallocated one doesn't
-//         // go back to the heap
-//         let i_a = pool.alloc_index(1).unwrap();
-//         times_allocated += 1;
-//         used_indexes += 1;
-//         blocks_allocated += 1;
-//         assert_eq!(i_a, times_allocated - 1);
+        // allocate another index and then free it, to show that the heap
+        // just automatically get's reclaimed
+        assert_eq!(pool.freed_bins.len, 0);
+        let tmp_i = pool.alloc_index(100).unwrap();
+        pool.dealloc_index(tmp_i);
+        assert_eq!(pool.freed_bins.len, 0);
+        assert_eq!(pool.heap_block, 4);
+        assert_eq!(pool.blocks_used, 4);
 
-//         // deallocate an index
-//         println!("free 1");
-//         assert_eq!(pool.freed_bins.len, 0);
-//         pool.dealloc_index(i);
-//         {
-//             println!("deallocated 1");
-//             assert_eq!(pool.index(i)._block, BLOCK_NULL);
+        // allocate an index so that the deallocated one doesn't
+        // go back to the heap
+        let i_a = pool.alloc_index(1).unwrap();
+        indexes_allocated += 1;
+        used_indexes += 1;
+        blocks_allocated += 1;
+        assert_eq!(i_a, indexes_allocated - 1);
 
-//             let freed = pool.freed(block);
-//             assert_eq!(freed.blocks(), 4);
-//             assert_eq!(freed._blocks, 4);
-//             assert_eq!(freed.prev(), None);
-//             assert_eq!(freed.next(), None);
-//             let bin = pool.freed_bins.get_insert_bin(4);
-//             assert_eq!(pool.freed_bins.bins[bin as usize].root(&pool).unwrap().block(), block);
-//         }
+        // deallocate an index
+        println!("free 1");
+        assert_eq!(pool.freed_bins.len, 0);
+        pool.dealloc_index(i);
+        indexes_allocated -= 1;
+        {
+            println!("deallocated 1");
+            assert_eq!(pool.index(i)._block, BLOCK_NULL);
 
-//         // allocate another index (that doesn't fit in the first)
-//         println!("allocate 2");
-//         let i2 = pool.alloc_index(8).unwrap();
-//         times_allocated += 1;
-//         used_indexes += 1;
-//         blocks_allocated += 8;
-//         assert_eq!(i2, times_allocated - 1);
-//         {
-//             let index2 = (*(&pool as *const RawPool)).index(i2);
-//             assert_eq!(index2._block, 5);
-//             assert_eq!(pool.full(index2.block()).blocks(), 8);
-//             assert_eq!(pool.full(index2.block())._blocks, BLOCK_HIGH_BIT | 8);
-//         }
+            let freed = pool.freed(block);
+            assert_eq!(freed.blocks(), 4);
+            assert_eq!(freed._blocks, 4);
+            assert_eq!(freed.prev(), None);
+            assert_eq!(freed.next(), None);
+            let bin = pool.freed_bins.get_insert_bin(4);
+            assert_eq!(pool.freed_bins.bins[bin as usize].root(&pool).unwrap().block(), block);
+        }
 
-//         // allocate a 3rd index (that does fit in the first)
-//         println!("allocate 3");
-//         let i3 = pool.alloc_index(2).unwrap();
-//         assert_eq!(i3, 7);
-//         times_allocated += 1;
-//         used_indexes += 1;
-//         blocks_allocated += 2;
-//         assert_eq!(i3, times_allocated - 1);
-//         {
-//             let index3 = (*(&pool as *const RawPool)).index(i3);
-//             assert_eq!(index3._block, 0);
-//             assert_eq!(pool.full(index3.block()).blocks(), 2);
-//             assert_eq!(pool.full(index3.block())._blocks, BLOCK_HIGH_BIT | 2);
-//         }
-//         // tests related to the fact that i3 just overwrote the freed item
-//         let bin = pool.freed_bins.get_insert_bin(2);
-//         let free_block = pool.freed_bins.bins[bin as usize].root(&pool).unwrap().block();
-//         assert_eq!(free_block, 2);
-//         {
-//             // free1 has moved
-//             let free = pool.freed(free_block);
-//             assert_eq!(free.blocks(), 2);
-//             assert_eq!(free.prev(), None);
-//             assert_eq!(free.next(), None);
-//         }
+        // allocate another index (that doesn't fit in the first)
+        println!("allocate 2");
+        let i2 = pool.alloc_index(8).unwrap();
+        used_indexes += 1;
+        blocks_allocated += 8;
+        // we are using the index from the last freed value
+        assert_eq!(i2, i);
+        indexes_allocated += 1;
+        {
+            let index2 = (*(&pool as *const RawPool)).index(i2);
+            assert_eq!(index2._block, 5);
+            assert_eq!(pool.full(index2.block()).blocks(), 8);
+            assert_eq!(pool.full(index2.block())._blocks, BLOCK_HIGH_BIT | 8);
+        }
 
-//         // allocate 3 indexes then free the first 2
-//         // then run the freeing clean
-//         assert_eq!(i3, 7);
-//         let allocs = (
-//             pool.alloc_index(4).unwrap(),
-//             pool.alloc_index(4).unwrap(),
-//             pool.alloc_index(4).unwrap());
+        // allocate a 3rd index (that does fit in the first)
+        println!("allocate 3");
+        let i3 = pool.alloc_index(2).unwrap();
+        indexes_allocated += 1;
+        used_indexes += 1;
+        blocks_allocated += 2;
+        assert_eq!(i3, indexes_allocated - 1);
+        {
+            let index3 = (*(&pool as *const RawPool)).index(i3);
+            assert_eq!(index3._block, 0);
+            assert_eq!(pool.full(index3.block()).blocks(), 2);
+            assert_eq!(pool.full(index3.block())._blocks, BLOCK_HIGH_BIT | 2);
+        }
+        // tests related to the fact that i3 just overwrote the freed item
+        let bin = pool.freed_bins.get_insert_bin(2);
+        let free_block = pool.freed_bins.bins[bin as usize].root(&pool).unwrap().block();
+        assert_eq!(free_block, 2);
+        {
+            // free1 has moved
+            let free = pool.freed(free_block);
+            assert_eq!(free.blocks(), 2);
+            assert_eq!(free.prev(), None);
+            assert_eq!(free.next(), None);
+        }
 
-//         times_allocated += 3;
-//         assert_eq!(allocs.2, times_allocated - 1);
+        // allocate 3 indexes then free the first 2
+        // then run the freeing clean
+        assert_eq!(i3, indexes_allocated - 1);
+        let allocs = (
+            pool.alloc_index(4).unwrap(),
+            pool.alloc_index(4).unwrap(),
+            pool.alloc_index(4).unwrap());
 
-//         used_indexes += 1;
-//         blocks_allocated += 4;
-//         let free_block = pool.index(allocs.0).block();
-//         pool.dealloc_index(allocs.0);
-//         pool.dealloc_index(allocs.1);
+        indexes_allocated += 3;
+        assert_eq!(allocs.2, indexes_allocated - 1);
 
-//         println!("cleaning freed");
-//         // println!("{}", pool.display());
-//         pool.clean();
-//         {
-//             let free = pool.freed(free_block);
-//             assert_eq!(free.blocks(), 8);
-//         }
-//         pool.clean();
-//         pool.clean();
+        used_indexes += 1;
+        blocks_allocated += 4;
+        let free_block = pool.index(allocs.0).block();
+        pool.dealloc_index(allocs.0);
+        pool.dealloc_index(allocs.1);
+        indexes_allocated -= 2;
 
-//         // defrag and make sure everything looks like how one would expect it
-//         println!("defragging");
-//         // println!("{}", pool.display());
-//         pool.defrag();
+        println!("cleaning freed");
+        // println!("{}", pool.display());
+        pool.clean();
+        {
+            let free = pool.freed(free_block);
+            assert_eq!(free.blocks(), 8);
+        }
+        pool.clean();
+        pool.clean();
 
-//         println!("done defragging");
-//         // println!("{}", pool.display());
-//         assert_eq!(pool.freed_bins.len, 0);
-//         assert_eq!(pool.blocks_used, blocks_allocated);
-//         assert_eq!(pool.indexes_used, used_indexes);
-//     }
-// }
+        // defrag and make sure everything looks like how one would expect it
+        println!("defragging");
+        // println!("{}", pool.display());
+        pool.defrag();
+
+        println!("done defragging");
+        // println!("{}", pool.display());
+        assert_eq!(pool.freed_bins.len, 0);
+        assert_eq!(pool.blocks_used, blocks_allocated);
+        assert_eq!(pool.indexes_used, used_indexes);
+    }
+}

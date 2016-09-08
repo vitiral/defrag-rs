@@ -458,134 +458,144 @@ impl FreedBins {
 }
 
 
-// #[test]
-// fn test_bins() {
-//     unsafe {
-//         let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = (
-//             [Index::default(); 256], mem::zeroed());
-//         let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
-//         let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
+#[test]
+fn test_bins() {
+    use core::slice;
+    use cbuf::CBuf;
+    unsafe {
+        let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = (
+            [Index::default(); 256], mem::zeroed());
+        let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
+        let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
 
-//         let mut pool = RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc);
-//         let p = &mut pool as *mut RawPool;
+        let mut cptr = [IndexLoc::default(); 16];
+        let cache_buf: &'static mut [IndexLoc] = slice::from_raw_parts_mut(
+            &mut cptr[0] as *mut IndexLoc, 16);
+        let cache = CBuf::new(cache_buf);
 
-//         // allocate and free through normal process
-//         let bin1 = Vec::from_iter(
-//             (0..5).map(|_| pool.alloc_index(10).unwrap()));
-//         let bin1_blocks: Vec<_> = bin1.iter().map(|i| pool.index(*i).block()).collect();
+        let mut pool = RawPool::new(
+            iptr, indexes.len() as IndexLoc,
+            bptr, blocks.len() as BlockLoc,
+            cache);
+        let p = &mut pool as *mut RawPool;
 
-//         let bin2 = Vec::from_iter(
-//             (0..5).map(|_| pool.alloc_index(20).unwrap()));
-//         let f1_i = pool.alloc_index(1).unwrap();
-//         let f1_index = (*p).index(f1_i);
-//         assert_eq!(f1_index.block(), 150);
-//         assert_eq!(f1_i, 10);
+        // allocate and free through normal process
+        let bin1 = Vec::from_iter(
+            (0..5).map(|_| pool.alloc_index(10).unwrap()));
+        let bin1_blocks: Vec<_> = bin1.iter().map(|i| pool.index(*i).block()).collect();
 
-//         for (i1, i2) in bin1.iter().zip(bin2.iter()) {
-//             pool.dealloc_index(*i2);
-//             pool.dealloc_index(*i1);
-//         }
+        let bin2 = Vec::from_iter(
+            (0..5).map(|_| pool.alloc_index(20).unwrap()));
+        let f1_i = pool.alloc_index(1).unwrap();
+        let f1_index = (*p).index(f1_i);
+        assert_eq!(f1_index.block(), 150);
+        assert_eq!(f1_i, 10);
 
-//         assert_eq!(pool.freed_bins.len, 10);
+        for (i1, i2) in bin1.iter().zip(bin2.iter()) {
+            pool.dealloc_index(*i2);
+            pool.dealloc_index(*i1);
+        }
 
-//         // go through bin1, asserting that it makes sense
-//         let bin1_freed: Vec<_> = bin1_blocks.iter().map(|b| (*p).freed_mut(*b)).collect();
-//         let b1_0 = pool.freed_mut(0);
-//         let b1_1 = pool.freed_mut(10);
-//         let b1_2 = pool.freed_mut(20);
-//         let b1_3 = pool.freed_mut(30);
-//         let b1_4 = pool.freed_mut(40);
+        assert_eq!(pool.freed_bins.len, 10);
 
-//         let b2_0 = pool.freed_mut(50);
-//         let b2_1 = pool.freed_mut(70);
-//         let b2_2 = pool.freed_mut(90);
-//         let b2_3 = pool.freed_mut(110);
-//         let b2_4 = pool.freed_mut(130);
+        // go through bin1, asserting that it makes sense
+        let bin1_freed: Vec<_> = bin1_blocks.iter().map(|b| (*p).freed_mut(*b)).collect();
+        let b1_0 = pool.freed_mut(0);
+        let b1_1 = pool.freed_mut(10);
+        let b1_2 = pool.freed_mut(20);
+        let b1_3 = pool.freed_mut(30);
+        let b1_4 = pool.freed_mut(40);
 
-//         // bins are a first in / last out buffer
-//         assert_eq!(pool.freed_bins.bins[1]._root, b1_4.block());
-//         assert_eq!(b1_4.prev(), None);
-//         assert_eq!(b1_4.next(), Some(b1_3.block()));
+        let b2_0 = pool.freed_mut(50);
+        let b2_1 = pool.freed_mut(70);
+        let b2_2 = pool.freed_mut(90);
+        let b2_3 = pool.freed_mut(110);
+        let b2_4 = pool.freed_mut(130);
 
-//         assert_eq!(b1_3.prev(), Some(b1_4.block()));
-//         assert_eq!(b1_3.next(), Some(b1_2.block()));
+        // bins are a first in / last out buffer
+        assert_eq!(pool.freed_bins.bins[1]._root, b1_4.block());
+        assert_eq!(b1_4.prev(), None);
+        assert_eq!(b1_4.next(), Some(b1_3.block()));
 
-//         assert_eq!(b1_2.prev(), Some(b1_3.block()));
-//         assert_eq!(b1_2.next(), Some(b1_1.block()));
+        assert_eq!(b1_3.prev(), Some(b1_4.block()));
+        assert_eq!(b1_3.next(), Some(b1_2.block()));
 
-//         assert_eq!(b1_1.prev(), Some(b1_2.block()));
-//         assert_eq!(b1_1.next(), Some(b1_0.block()));
+        assert_eq!(b1_2.prev(), Some(b1_3.block()));
+        assert_eq!(b1_2.next(), Some(b1_1.block()));
 
-//         assert_eq!(b1_0.prev(), Some(b1_1.block()));
-//         assert_eq!(b1_0.next(), None);
+        assert_eq!(b1_1.prev(), Some(b1_2.block()));
+        assert_eq!(b1_1.next(), Some(b1_0.block()));
 
-//         // test remove
-//         b1_4.remove(&mut *p);
-//         assert_eq!(pool.freed_bins.len, 9);
-//         assert_eq!(pool.freed_bins.bins[1]._root, b1_3.block());
-//         assert_eq!(b1_3.prev(), None);
-//         assert_eq!(b1_3.next(), Some(b1_2.block()));
+        assert_eq!(b1_0.prev(), Some(b1_1.block()));
+        assert_eq!(b1_0.next(), None);
 
-//         // re-insert, everything should go back to same as before
-//         (*p).freed_bins.insert(&mut *p, b1_4);
-//         assert_eq!(pool.freed_bins.len, 10);
-//         assert_eq!(pool.freed_bins.bins[1]._root, b1_4.block());
-//         assert_eq!(b1_4.prev(), None);
-//         assert_eq!(b1_4.next(), Some(b1_3.block()));
-//         assert_eq!(b1_3.prev(), Some(b1_4.block()));
-//         assert_eq!(b1_3.next(), Some(b1_2.block()));
+        // test remove
+        b1_4.remove(&mut *p);
+        assert_eq!(pool.freed_bins.len, 9);
+        assert_eq!(pool.freed_bins.bins[1]._root, b1_3.block());
+        assert_eq!(b1_3.prev(), None);
+        assert_eq!(b1_3.next(), Some(b1_2.block()));
 
-//         // test "simpler" join
-//         b1_0.join(&mut *p, b1_1);
-//         let b2_5 = pool.freed_mut(b1_0.block());
-//         assert_eq!(pool.freed_bins.len, 9);
-//         assert_eq!(b2_5.blocks(), 20);
-//         assert_eq!(pool.freed_bins.bins[2]._root, b2_5.block());
-//         assert_eq!(b2_5.prev(), None);
-//         assert_eq!(b2_5.next(), Some(b2_4.block()));
+        // re-insert, everything should go back to same as before
+        (*p).freed_bins.insert(&mut *p, b1_4);
+        assert_eq!(pool.freed_bins.len, 10);
+        assert_eq!(pool.freed_bins.bins[1]._root, b1_4.block());
+        assert_eq!(b1_4.prev(), None);
+        assert_eq!(b1_4.next(), Some(b1_3.block()));
+        assert_eq!(b1_3.prev(), Some(b1_4.block()));
+        assert_eq!(b1_3.next(), Some(b1_2.block()));
 
-//         // more complex join... joining things from separate bins
-//         // not actually that much more complex in the logic though
-//         b2_5.join(&mut *p, b1_2);
-//         assert_eq!(pool.freed_bins.len, 8);
-//         assert_eq!(b2_5.blocks(), 30);
-//         assert_eq!(pool.freed_bins.bins[2]._root, b2_5.block());
-//         assert_eq!(b2_5.prev(), None);
-//         assert_eq!(b2_5.next(), Some(b2_4.block()));
+        // test "simpler" join
+        b1_0.join(&mut *p, b1_1);
+        let b2_5 = pool.freed_mut(b1_0.block());
+        assert_eq!(pool.freed_bins.len, 9);
+        assert_eq!(b2_5.blocks(), 20);
+        assert_eq!(pool.freed_bins.bins[2]._root, b2_5.block());
+        assert_eq!(b2_5.prev(), None);
+        assert_eq!(b2_5.next(), Some(b2_4.block()));
 
-//         b2_5.join(&mut *p, b1_3);
-//         b2_5.join(&mut *p, b1_4);
-//         assert_eq!(pool.freed_bins.len, 6);
-//         assert_eq!(b2_5.blocks(), 50);
-//         assert_eq!(pool.freed_bins.bins[2]._root, b2_5.block());
-//         assert_eq!(b2_5.prev(), None);
-//         assert_eq!(b2_5.next(), Some(b2_4.block()));
+        // more complex join... joining things from separate bins
+        // not actually that much more complex in the logic though
+        b2_5.join(&mut *p, b1_2);
+        assert_eq!(pool.freed_bins.len, 8);
+        assert_eq!(b2_5.blocks(), 30);
+        assert_eq!(pool.freed_bins.bins[2]._root, b2_5.block());
+        assert_eq!(b2_5.prev(), None);
+        assert_eq!(b2_5.next(), Some(b2_4.block()));
 
-//         b2_5.join(&mut *p, b2_0);
-//         let b3_0 = pool.freed_mut(b2_5.block());
-//         assert_eq!(pool.freed_bins.len, 5);
-//         assert_eq!(b2_5.blocks(), 70);
-//         assert_eq!(pool.freed_bins.bins[2]._root, b2_4.block());
-//         assert_eq!(pool.freed_bins.bins[3]._root, b3_0.block());
-//         assert_eq!(b3_0.prev(), None);
-//         assert_eq!(b3_0.next(), None);
+        b2_5.join(&mut *p, b1_3);
+        b2_5.join(&mut *p, b1_4);
+        assert_eq!(pool.freed_bins.len, 6);
+        assert_eq!(b2_5.blocks(), 50);
+        assert_eq!(pool.freed_bins.bins[2]._root, b2_5.block());
+        assert_eq!(b2_5.prev(), None);
+        assert_eq!(b2_5.next(), Some(b2_4.block()));
 
-//         assert_eq!(b2_4.prev(), None);
-//         assert_eq!(b2_4.next(), Some(b2_3.block()));
+        b2_5.join(&mut *p, b2_0);
+        let b3_0 = pool.freed_mut(b2_5.block());
+        assert_eq!(pool.freed_bins.len, 5);
+        assert_eq!(b2_5.blocks(), 70);
+        assert_eq!(pool.freed_bins.bins[2]._root, b2_4.block());
+        assert_eq!(pool.freed_bins.bins[3]._root, b3_0.block());
+        assert_eq!(b3_0.prev(), None);
+        assert_eq!(b3_0.next(), None);
 
-//         // this is just a really good place to test clean and defrag too...
-//         (*p).clean();
-//         assert_eq!(pool.freed_bins.len, 1);
-//         assert_eq!(b1_0.blocks(), 150);
+        assert_eq!(b2_4.prev(), None);
+        assert_eq!(b2_4.next(), Some(b2_3.block()));
 
-//         (*p).defrag();
-//         assert_eq!(pool.freed_bins.len, 0);
-//         assert_eq!(pool.heap_block, 1);
-//         let f1_0 = pool.full(0);
-//         f1_0.assert_valid();
-//         assert_eq!(f1_0.blocks(), 1);
-//         assert_eq!(f1_0.index(), f1_i);
-//         assert_eq!(f1_index.block(), 0);
-//     }
-// }
+        // this is just a really good place to test clean and defrag too...
+        (*p).clean();
+        assert_eq!(pool.freed_bins.len, 1);
+        assert_eq!(b1_0.blocks(), 150);
+
+        (*p).defrag();
+        assert_eq!(pool.freed_bins.len, 0);
+        assert_eq!(pool.heap_block, 1);
+        let f1_0 = pool.full(0);
+        f1_0.assert_valid();
+        assert_eq!(f1_0.blocks(), 1);
+        assert_eq!(f1_0.index(), f1_i);
+        assert_eq!(f1_index.block(), 0);
+    }
+}
 
