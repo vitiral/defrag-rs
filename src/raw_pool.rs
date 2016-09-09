@@ -248,7 +248,7 @@ pub struct RawPool {
     indexes_used: IndexLoc,     // total number of indexes used
 
     // index cache
-    index_cache: CBuf<'static, IndexLoc>,
+    pub index_cache: CBuf<'static, IndexLoc>,
 
     // freed data
     pub freed_bins: FreedBins,           // freed bins

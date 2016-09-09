@@ -41,8 +41,10 @@ impl Drop for Pool {
             let raw = &mut *self.raw;
             let size_indexes = raw.len_indexes() as usize * mem::size_of::<Index>();
             let size_blocks = raw.len_blocks() as usize * mem::size_of::<Block>();
+            let size_cache = raw.index_cache.len() as usize * mem::size_of::<IndexLoc>();
 
-            // They have to be deallocated in the order they were allocated
+            // They have to be deallocated in the reverse order they were allocated
+            heap::deallocate(raw.index_cache.as_mut_ptr() as *mut u8, size_cache, align);
             heap::deallocate(raw._indexes as *mut u8, size_indexes, align);
             heap::deallocate(raw._blocks as *mut u8, size_blocks, align);
             heap::deallocate(self.raw as *mut u8, size_raw, align);
@@ -62,39 +64,45 @@ impl Pool {
     Allocating a Mutex uses an index, dropping the Mutex frees the index.
     */
     pub fn new(size: usize, indexes: IndexLoc) -> Result<Pool> {
+        let cache_len: IndexLoc = 10;
+
         let num_blocks = ceil(size, mem::size_of::<Block>());
         if indexes > IndexLoc::max_value() / 2
-                || num_blocks > BlockLoc::max_value() as usize / 2 {
+            || num_blocks > BlockLoc::max_value() as usize / 2
+            || cache_len > indexes {
             return Err(Error::InvalidSize)
         }
+        let num_indexes = indexes;
         unsafe {
-            let num_indexes = indexes;
-            let size_raw = mem::size_of::<RawPool>();
             // allocate our memory
             let align = mem::size_of::<usize>();
-            let pool = heap::allocate(size_raw, align);
-            if pool.is_null() {
-                return Err(Error::OutOfMemory);
-            }
-            let size_indexes = indexes as usize * mem::size_of::<Index>();
-            let indexes = heap::allocate(size_indexes, align);
-            if indexes.is_null() {
-                heap::deallocate(pool, size_raw, align);
-                return Err(Error::OutOfMemory);
-            }
-            let size_blocks = num_blocks * mem::size_of::<Block>();
-            let blocks = heap::allocate(size_blocks, align);
-            if blocks.is_null() {
-                heap::deallocate(indexes, size_indexes, align);
-                heap::deallocate(pool, size_raw, align);
-                return Err(Error::OutOfMemory);
-            }
 
-            let cache_len = 10;
-            let size_cache = cache_len * mem::size_of::<IndexLoc>();
+            let size_raw = mem::size_of::<RawPool>();
+            let size_indexes = num_indexes as usize * mem::size_of::<Index>();
+            let size_blocks = num_blocks * mem::size_of::<Block>();
+            let size_cache = cache_len as usize * mem::size_of::<IndexLoc>();
+
+            let pool = heap::allocate(size_raw, align);
+            let indexes = heap::allocate(size_indexes, align);
+            let blocks = heap::allocate(size_blocks, align);
             let cache = heap::allocate(size_cache, align);
-            if cache.is_null() {
-                panic!("woo!");
+
+            // if any failed to allocate, deallocate in reverse order
+            if pool.is_null() || indexes.is_null() || blocks.is_null() ||
+                    cache.is_null() {
+                if !cache.is_null() {
+                    heap::deallocate(cache, size_cache as usize, align);
+                }
+                if !blocks.is_null() {
+                    heap::deallocate(blocks, size_blocks, align);
+                }
+                if !indexes.is_null() {
+                    heap::deallocate(indexes, size_indexes, align);
+                }
+                if !pool.is_null() {
+                    heap::deallocate(pool, size_raw, align);
+                }
+                return Err(Error::OutOfMemory);
             }
 
             let pool = pool as *mut RawPool;

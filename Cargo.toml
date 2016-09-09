@@ -10,8 +10,8 @@ readme = "README.md"
 license = "MIT"
 
 [dependencies]
-# dpc-cbuf = {git="https://github.com/vitiral/cbuf-rs"}
-cbuf = "*"
+cbuf = {git="https://github.com/dpc/cbuf-rs"}
+# cbuf = "*"
 
 [dev-dependencies]
 rand = "0.3"
