@@ -25,7 +25,7 @@ use core::mem;
 use core::iter::FromIterator;
 use core::result;
 
-use rand::{Rng, SeedableRng, XorShiftRng};
+use rand::{sample, Rng, SeedableRng, XorShiftRng};
 use stopwatch::Stopwatch;
 
 use super::*;
@@ -53,6 +53,33 @@ struct Stats {
     out_of_mems: usize,
 }
 
+/// Actions that can be done when a full allocation is found
+#[derive(Debug, Copy, Clone)]
+enum FullActions {
+    Deallocate,
+    Clean,
+    Change,
+}
+
+/// Actions that can be done when an empty allocation is found
+#[derive(Debug, Copy, Clone)]
+enum EmptyActions {
+    Alloc,
+    Skip,
+}
+
+#[derive(Debug, Default)]
+struct Settings {
+    /// the number of loops to run
+    loops: usize,
+    /// an action will randomly be selected from this list when
+    /// data is found in an allocation
+    full_chances: Vec<FullActions>,
+    /// an action will randomly be selected from this list when
+    /// data is not found in an allocation
+    empty_chances: Vec<EmptyActions>,
+}
+
 /// contains means to track test as well as
 /// settings for test
 struct Tracker {
@@ -60,15 +87,18 @@ struct Tracker {
     clock: Stopwatch,
     test_clock: Stopwatch,
     stats: Stats,
+    settings: Settings,
 }
 
 impl Tracker {
-    pub fn new() -> Tracker {
+    pub fn new(settings: Settings) -> Tracker {
         let seed = [1, 2, 3, 4];
         let mut gen = XorShiftRng::from_seed(seed);
         Tracker { gen: gen,
                   clock: Stopwatch::new(), test_clock: Stopwatch::new(),
-                  stats: Stats::default() }
+                  stats: Stats::default(),
+                  settings: settings,
+        }
     }
 }
 
@@ -165,20 +195,20 @@ impl<'a> Allocation<'a> {
         try!(self.assert_valid());
         match self.mutex {
             // we have data, we need to decide what to do with it
-            Some(_) => match t.gen.gen::<usize>() % 100 {
-                0...50 => {
+            Some(_) => match sample(&mut t.gen, &t.settings.full_chances, 1)[0] {
+                &FullActions::Deallocate => {
                     // deallocate the data
                     self.mutex = None;
                     t.stats.frees += 1;
                 },
-                51...60 => {
+                &FullActions::Clean => {
                     // clean the data
                     t.clock.start();
                     self.pool.clean();
                     t.clock.stop();
                     t.stats.cleans += 1;
                 },
-                _ => {
+                &FullActions::Change => {
                     // change the data
                     self.fill(t);
                 },
@@ -205,7 +235,7 @@ fn do_test(pool: &Pool, allocs: &mut Vec<Allocation>, track: &mut Tracker) {
     println!("some random values: {}, {}, {}",
              track.gen.gen::<u16>(), track.gen.gen::<u16>(), track.gen.gen::<u16>());
     track.test_clock.start();
-    for _ in 0..50 {
+    for _ in 0..track.settings.loops {
         for alloc in allocs.iter_mut() {
             alloc.do_random(track).unwrap();
         }
@@ -228,7 +258,15 @@ fn test_it() {
                 data: Vec::new(),
                 mutex: None,
             }));
-    let mut track = Tracker::new();
+    // type FA = FullActions;
+    // type EA = EmptyActions;
+    let mut settings = Settings {
+        loops: 50,
+        full_chances: Vec::from_iter([FullActions::Deallocate; 9].iter().cloned()),
+        empty_chances: vec![EmptyActions::Alloc],
+    };
+    settings.full_chances.push(FullActions::Clean);
+    let mut track = Tracker::new(settings);
     let res = panic::catch_unwind(panic::AssertUnwindSafe(
         || do_test(&pool, &mut allocs, &mut track)));
     println!("{}", pool.display());
@@ -242,5 +280,4 @@ fn test_it() {
             panic::resume_unwind(e);
         }
     };
-    // maxed out blocks, 1/10 max indexes
 }
