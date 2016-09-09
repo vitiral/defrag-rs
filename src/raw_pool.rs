@@ -356,7 +356,7 @@ impl RawPool {
 
     /// allocate data with a specified number of blocks,
     /// including the half block required to store `Full` struct
-    pub unsafe fn alloc_index(&mut self, blocks: BlockLoc) -> Result<IndexLoc> {
+    pub unsafe fn alloc_index(&mut self, blocks: BlockLoc, fast: bool) -> Result<IndexLoc> {
         if blocks == 0 {
             return Err(Error::InvalidSize);
         }
@@ -365,7 +365,7 @@ impl RawPool {
         }
         let prev_used_index = self.last_index_used;
         let i = try!(self.get_unused_index());
-        let block = if let Some(block) = self.use_freed(blocks) {
+        let block = if let Some(block) = self.use_freed(blocks, fast) {
             // we are reusing previously freed data
             block
         } else if (self.heap_block + blocks) <= self.len_blocks() {
@@ -606,11 +606,20 @@ impl RawPool {
     }
 
     /// get a freed value from the freed bins
-    unsafe fn use_freed(&mut self, blocks: BlockLoc) -> Option<BlockLoc> {
+    unsafe fn use_freed(&mut self, blocks: BlockLoc, fast: bool)
+    -> Option<BlockLoc>{
         let selfptr = self as *mut RawPool;
-        match (*selfptr).freed_bins.pop(self, blocks) {
-            Some(f) => Some(f),
-            None => None,
+        let fast = true;
+        if fast {
+            match (*selfptr).freed_bins.pop_fast(self, blocks) {
+                Some(f) => Some(f),
+                None => None,
+            }
+        } else {
+            match (*selfptr).freed_bins.pop_slow(self, blocks) {
+                Some(f) => Some(f),
+                None => None,
+            }
         }
     }
 }
@@ -675,7 +684,7 @@ fn test_indexes() {
         // allocate an index
         println!("allocate 1");
         assert_eq!(pool.freed_bins.len, 0);
-        let i = pool.alloc_index(4).unwrap();
+        let i = pool.alloc_index(4, true).unwrap();
         indexes_allocated += 1;
         assert_eq!(i, indexes_allocated - 1);
         let block;
@@ -690,7 +699,7 @@ fn test_indexes() {
         // allocate another index and then free it, to show that the heap
         // just automatically get's reclaimed
         assert_eq!(pool.freed_bins.len, 0);
-        let tmp_i = pool.alloc_index(100).unwrap();
+        let tmp_i = pool.alloc_index(100, true).unwrap();
         pool.dealloc_index(tmp_i);
         assert_eq!(pool.freed_bins.len, 0);
         assert_eq!(pool.heap_block, 4);
@@ -698,7 +707,7 @@ fn test_indexes() {
 
         // allocate an index so that the deallocated one doesn't
         // go back to the heap
-        let i_a = pool.alloc_index(1).unwrap();
+        let i_a = pool.alloc_index(1, true).unwrap();
         indexes_allocated += 1;
         used_indexes += 1;
         blocks_allocated += 1;
@@ -724,7 +733,7 @@ fn test_indexes() {
 
         // allocate another index (that doesn't fit in the first)
         println!("allocate 2");
-        let i2 = pool.alloc_index(8).unwrap();
+        let i2 = pool.alloc_index(8, true).unwrap();
         used_indexes += 1;
         blocks_allocated += 8;
         // we are using the index from the last freed value
@@ -739,7 +748,7 @@ fn test_indexes() {
 
         // allocate a 3rd index (that does fit in the first)
         println!("allocate 3");
-        let i3 = pool.alloc_index(2).unwrap();
+        let i3 = pool.alloc_index(2, true).unwrap();
         indexes_allocated += 1;
         used_indexes += 1;
         blocks_allocated += 2;
@@ -766,9 +775,9 @@ fn test_indexes() {
         // then run the freeing clean
         assert_eq!(i3, indexes_allocated - 1);
         let allocs = (
-            pool.alloc_index(4).unwrap(),
-            pool.alloc_index(4).unwrap(),
-            pool.alloc_index(4).unwrap());
+            pool.alloc_index(4, true).unwrap(),
+            pool.alloc_index(4, true).unwrap(),
+            pool.alloc_index(4, true).unwrap());
 
         indexes_allocated += 3;
         assert_eq!(allocs.2, indexes_allocated - 1);

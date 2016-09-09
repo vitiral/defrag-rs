@@ -152,7 +152,7 @@ impl Pool {
             if blocks > (*self.raw).len_blocks() as usize {
                 return Err(Error::InvalidSize);
             }
-            let i = try!((*self.raw).alloc_index(blocks as u16));
+            let i = try!((*self.raw).alloc_index(blocks as u16, false));
             let index = (*self.raw).index(i);
             let mut p = (*self.raw).data(index.block()) as *mut T;
             *p = T::default();
@@ -175,7 +175,7 @@ impl Pool {
             if blocks > (*self.raw).len_blocks() as usize {
                 return Err(Error::InvalidSize);
             }
-            let i = try!((*self.raw).alloc_index(blocks as u16));
+            let i = try!((*self.raw).alloc_index(blocks as u16, false));
             let index = (*self.raw).index(i);
             let mut p = (*self.raw).data(index.block()) as *mut T;
             for _ in 0..len {

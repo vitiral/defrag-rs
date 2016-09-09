@@ -59,10 +59,8 @@ mod utils;
 #[cfg(test)]
 mod tests;
 
-
 pub use types::{Error, Result};
 pub use raw_pool::Block;
 pub use pool::{Pool,
                Mutex, Value,
                SliceMutex, Slice};
-

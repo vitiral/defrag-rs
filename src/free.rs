@@ -374,11 +374,50 @@ impl FreedBins {
         self.bins[bin as usize].insert_root(pool, freed);
     }
 
-    /// get a block of the requested size from the freed bins, removing it from the freed
-    /// bins. It should be assumed that none of the data at the `block` output location
-    /// is valid after this operation is performed.
-    /// This is the only method that RawPool uses to re-use freed blocks
-    pub unsafe fn pop(&mut self, pool: &mut RawPool, blocks: BlockLoc) -> Option<BlockLoc>{
+    pub unsafe fn pop_slow(&mut self, pool: &mut RawPool, blocks: BlockLoc)
+                           -> Option<BlockLoc> {
+        assert!(blocks != 0);
+        if self.len == 0 {
+            return None;
+        }
+        let bin = self.get_insert_bin(blocks);
+        let poolptr = pool as *mut RawPool;
+        for b in bin..(NUM_BINS - 1) {
+            if let Some(mut current_free) = self.bins[b as usize].root(&mut *poolptr) {
+                // there is free data in this bin, search the bin for the
+                // best fit value (there isn't going to be a better fit at higher bins)
+                let mut best = current_free;
+                loop {
+                    if best.blocks() == blocks {
+                        break;
+                    }
+                    let next = match current_free.next() {
+                        Some(ref f) => (*poolptr).freed_mut(*f),
+                        None => break,
+                    };
+                    if next.blocks() >= blocks && next.blocks() < best.blocks() {
+                        best = next;
+                    }
+                    current_free = next;
+                }
+                if best.blocks() >= blocks {
+                    let out = (*poolptr).freed_mut(best.block());
+                    self.consume_partof(pool, out, blocks);
+                    return Some(out.block());
+                }
+            }
+        }
+        None
+    }
+
+    /**
+    Get a block of the requested size from the freed bins as quickly as
+    possible, removing it from the freed bins. It should be assumed that none
+    of the data at the `block` output location is valid after this operation is
+    performed.
+    */
+    pub unsafe fn pop_fast(&mut self, pool: &mut RawPool, blocks: BlockLoc)
+                           -> Option<BlockLoc> {
         assert!(blocks != 0);
         if self.len == 0 {
             return None;
@@ -397,7 +436,6 @@ impl FreedBins {
         };
         let poolptr = pool as *mut RawPool;
         for b in bin..(NUM_BINS - 1) {
-            let poolptr = pool as *mut RawPool;
             if let Some(out) = self.bins[b as usize].root_mut(&mut *poolptr) {
                 // we have found freed data that is >= the size we need
                 self.consume_partof(pool, out, blocks);
@@ -481,12 +519,12 @@ fn test_bins() {
 
         // allocate and free through normal process
         let bin1 = Vec::from_iter(
-            (0..5).map(|_| pool.alloc_index(10).unwrap()));
+            (0..5).map(|_| pool.alloc_index(10, true).unwrap()));
         let bin1_blocks: Vec<_> = bin1.iter().map(|i| pool.index(*i).block()).collect();
 
         let bin2 = Vec::from_iter(
-            (0..5).map(|_| pool.alloc_index(20).unwrap()));
-        let f1_i = pool.alloc_index(1).unwrap();
+            (0..5).map(|_| pool.alloc_index(20, true).unwrap()));
+        let f1_i = pool.alloc_index(1, true).unwrap();
         let f1_index = (*p).index(f1_i);
         assert_eq!(f1_index.block(), 150);
         assert_eq!(f1_i, 10);
