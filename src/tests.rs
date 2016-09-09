@@ -219,7 +219,7 @@ fn test_it() {
     let blocks = u16::max_value() / 2;
     let size = blocks as usize * mem::size_of::<Block>();
     let len_indexes = blocks / 128;
-    let mut pool = Pool::new(size, len_indexes).expect("can't get pool");
+    let mut pool = Pool::new(size, len_indexes, len_indexes / 10).expect("can't get pool");
     let mut allocs = Vec::from_iter(
         (0..pool.len_indexes())
             .map(|i| Allocation {

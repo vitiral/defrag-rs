@@ -62,14 +62,24 @@ impl Pool {
     `indexes` are the total number of indexes available. This is the maximum
     number of simultanious allocations that can be taken out of the pool.
     Allocating a Mutex uses an index, dropping the Mutex frees the index.
-    */
-    pub fn new(size: usize, indexes: IndexLoc) -> Result<Pool> {
-        let cache_len: IndexLoc = 10;
 
+    `index_cache` is the maximum number of indexes that can be stored in the
+    cache. If there are no indexes in the cache, the maximum lookup time to
+    obtain an index is O(indexes.len()). Setting index_cache == indexes
+    will ensure that indexes are found in O(1). For most applications,
+    setting index_cache = 1/10 of indexes or less is recommended
+    */
+    pub fn new(size: usize, indexes: IndexLoc, index_cache: IndexLoc) -> Result<Pool> {
+        let cache_len = if index_cache == 0 {
+            1
+        } else if index_cache > indexes {
+            indexes
+        } else {
+            index_cache
+        };
         let num_blocks = ceil(size, mem::size_of::<Block>());
         if indexes > IndexLoc::max_value() / 2
-            || num_blocks > BlockLoc::max_value() as usize / 2
-            || cache_len > indexes {
+            || num_blocks > BlockLoc::max_value() as usize / 2 {
             return Err(Error::InvalidSize)
         }
         let num_indexes = indexes;
@@ -393,7 +403,7 @@ impl<'a, 'mutex: 'a, T: 'a> DerefMut for Slice<'a, 'mutex, T> {
 
 #[test]
 fn test_alloc() {
-    let pool = Pool::new(4096, 256).unwrap();
+    let pool = Pool::new(4096, 256, 25).unwrap();
     let expected = 0x01010101;
 
     let mut mutex = pool.alloc::<u32>().unwrap();
@@ -417,7 +427,7 @@ fn test_alloc() {
 
 #[test]
 fn test_alloc_slice() {
-    let pool = Pool::new(4096 * mem::size_of::<Block>(), 256).unwrap();
+    let pool = Pool::new(4096 * mem::size_of::<Block>(), 256, 25).unwrap();
 
     let mut mutex = pool.alloc_slice::<u16>(10000).unwrap();
     let mut slice = mutex.lock();
