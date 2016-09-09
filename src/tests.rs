@@ -25,23 +25,18 @@ use core::mem;
 use core::iter::FromIterator;
 use core::result;
 
-use rand::{Rng, SeedableRng, XorShiftRng};
+use test::Bencher;
+use rand::{sample, Rng, SeedableRng, XorShiftRng};
 use stopwatch::Stopwatch;
 
 use super::*;
+use super::types::{BlockLoc, IndexLoc};
 
 type Fill = u32;
 type TResult<T> = result::Result<T, String>;
 
 impl panic::UnwindSafe for Pool {}
 
-
-// struct Settings {
-//     chance_deallocate: u8,
-//     chance_change: u8,
-//     chance_clean: u8,
-//     max_len: u16,
-// }
 
 #[derive(Debug, Default)]
 struct Stats {
@@ -53,6 +48,33 @@ struct Stats {
     out_of_mems: usize,
 }
 
+/// Actions that can be done when a full allocation is found
+#[derive(Debug, Copy, Clone)]
+enum FullActions {
+    Deallocate,
+    Clean,
+    Change,
+}
+
+/// Actions that can be done when an empty allocation is found
+#[derive(Debug, Copy, Clone)]
+enum EmptyActions {
+    Alloc,
+    Skip,
+}
+
+#[derive(Debug, Default, Clone)]
+struct Settings {
+    /// the number of loops to run
+    loops: usize,
+    /// an action will randomly be selected from this list when
+    /// data is found in an allocation
+    full_chances: Vec<FullActions>,
+    /// an action will randomly be selected from this list when
+    /// data is not found in an allocation
+    empty_chances: Vec<EmptyActions>,
+}
+
 /// contains means to track test as well as
 /// settings for test
 struct Tracker {
@@ -60,15 +82,18 @@ struct Tracker {
     clock: Stopwatch,
     test_clock: Stopwatch,
     stats: Stats,
+    settings: Settings,
 }
 
 impl Tracker {
-    pub fn new() -> Tracker {
+    pub fn new(settings: Settings) -> Tracker {
         let seed = [1, 2, 3, 4];
         let mut gen = XorShiftRng::from_seed(seed);
         Tracker { gen: gen,
                   clock: Stopwatch::new(), test_clock: Stopwatch::new(),
-                  stats: Stats::default() }
+                  stats: Stats::default(),
+                  settings: settings,
+        }
     }
 }
 
@@ -165,20 +190,20 @@ impl<'a> Allocation<'a> {
         try!(self.assert_valid());
         match self.mutex {
             // we have data, we need to decide what to do with it
-            Some(_) => match t.gen.gen::<usize>() % 100 {
-                0...50 => {
+            Some(_) => match sample(&mut t.gen, &t.settings.full_chances, 1)[0] {
+                &FullActions::Deallocate => {
                     // deallocate the data
                     self.mutex = None;
                     t.stats.frees += 1;
                 },
-                51...60 => {
+                &FullActions::Clean => {
                     // clean the data
                     t.clock.start();
                     self.pool.clean();
                     t.clock.stop();
                     t.stats.cleans += 1;
                 },
-                _ => {
+                &FullActions::Change => {
                     // change the data
                     self.fill(t);
                 },
@@ -205,7 +230,7 @@ fn do_test(pool: &Pool, allocs: &mut Vec<Allocation>, track: &mut Tracker) {
     println!("some random values: {}, {}, {}",
              track.gen.gen::<u16>(), track.gen.gen::<u16>(), track.gen.gen::<u16>());
     track.test_clock.start();
-    for _ in 0..50 {
+    for _ in 0..track.settings.loops {
         for alloc in allocs.iter_mut() {
             alloc.do_random(track).unwrap();
         }
@@ -214,12 +239,12 @@ fn do_test(pool: &Pool, allocs: &mut Vec<Allocation>, track: &mut Tracker) {
     track.test_clock.stop();
 }
 
-#[test]
-fn test_it() {
-    let blocks = u16::max_value() / 2;
+fn run_test(name: &str, settings: Settings,
+            blocks: BlockLoc, indexes: IndexLoc, index_cache: IndexLoc) {
+    let mut track = Tracker::new(settings);
+
     let size = blocks as usize * mem::size_of::<Block>();
-    let len_indexes = blocks / 128;
-    let mut pool = Pool::new(size, len_indexes, len_indexes / 10).expect("can't get pool");
+    let mut pool = Pool::new(size, indexes, index_cache).expect("can't get pool");
     let mut allocs = Vec::from_iter(
         (0..pool.len_indexes())
             .map(|i| Allocation {
@@ -228,10 +253,16 @@ fn test_it() {
                 data: Vec::new(),
                 mutex: None,
             }));
-    let mut track = Tracker::new();
+
     let res = panic::catch_unwind(panic::AssertUnwindSafe(
         || do_test(&pool, &mut allocs, &mut track)));
-    println!("{}", pool.display());
+    println!("## {}", name);
+    match res {
+        Ok(_) => {},
+        Err(_) => {
+            println!("{}", pool.display());
+        }
+    }
     println!("TIMES: test={}ms, pool={}ms",
              track.test_clock.elapsed_ms(),
              track.clock.elapsed_ms());
@@ -239,8 +270,56 @@ fn test_it() {
     match res {
         Ok(_) => {},
         Err(e) => {
-            panic::resume_unwind(e);
+             panic::resume_unwind(e);
         }
     };
-    // maxed out blocks, 1/10 max indexes
+}
+
+pub const BLOCKS: BlockLoc = u16::max_value() / 2;
+// pub const INDEXES: IndexLoc = BLOCKS / 128;
+pub const INDEXES: IndexLoc = 512;
+pub const LOOPS: usize = 1000;
+
+#[test]
+fn small_integration() {
+    let mut settings = Settings {
+        loops: 50,
+        full_chances: Vec::from_iter([FullActions::Deallocate; 9].iter().cloned()),
+        empty_chances: vec![EmptyActions::Alloc],
+    };
+    settings.full_chances.push(FullActions::Clean);
+    run_test("small_integration", settings, BLOCKS, INDEXES, INDEXES / 10);
+}
+
+#[bench]
+fn bench_no_cache(b: &mut Bencher) {
+    let mut settings = Settings {
+        loops: LOOPS,
+        full_chances: Vec::from_iter([FullActions::Deallocate; 9].iter().cloned()),
+        empty_chances: vec![EmptyActions::Alloc],
+    };
+    settings.full_chances.push(FullActions::Clean);
+    run_test("bench_no_cache", settings.clone(), BLOCKS, INDEXES, 1);
+}
+
+#[bench]
+fn bench_large_cache(b: &mut Bencher) {
+    let mut settings = Settings {
+        loops: LOOPS,
+        full_chances: Vec::from_iter([FullActions::Deallocate; 9].iter().cloned()),
+        empty_chances: vec![EmptyActions::Alloc],
+    };
+    settings.full_chances.push(FullActions::Clean);
+    run_test("bench_large_cache", settings.clone(), BLOCKS, INDEXES, INDEXES);
+}
+
+#[bench]
+fn bench_small_cache(b: &mut Bencher) {
+    let mut settings = Settings {
+        loops: LOOPS,
+        full_chances: Vec::from_iter([FullActions::Deallocate; 9].iter().cloned()),
+        empty_chances: vec![EmptyActions::Alloc],
+    };
+    settings.full_chances.push(FullActions::Clean);
+    run_test("bench_small_cache", settings.clone(), BLOCKS, INDEXES, INDEXES / 20);
 }

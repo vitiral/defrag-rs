@@ -35,10 +35,12 @@ various strategies for utilzing freed blocks of memory.
 #![feature(alloc)]
 #![feature(heap_api)]
 #![feature(const_fn)]
+#![feature(test)]
 
 #![no_std]
 
 // test utilities
+#[cfg(test)] extern crate test;
 #[cfg(test)]
 #[macro_use] extern crate std;
 #[cfg(test)] use std::prelude::*;
