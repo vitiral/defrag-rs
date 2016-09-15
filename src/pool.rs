@@ -130,29 +130,67 @@ impl Pool {
         }
     }
 
-    /// !! UNSTABLE !!
-    ///
-    /// get a Pool from a RawPool that you have initialized
-    /// currently `alloc::heap::dealloc` will be called on the
-    /// memory when `Pool` it goes out of scope.
+    /**
+    !! UNSTABLE !!
+
+    get a Pool from a RawPool that you have initialized.
+    unsafe: currently `alloc::heap::dealloc` will be called on the
+    memory when `Pool` it goes out of scope, so you must ensure that
+    Pool does not go out of scope... or something
+    */
     pub unsafe fn from_raw(raw: *mut RawPool) -> Pool {
         Pool { raw: raw }
     }
 
-    /// attempt to allocate memory of type T, returning `Result<Mutex<T>>`.
-    ///
-    /// If `Ok(Mutex<T>)`, the memory will have been initialized to `T.default`
-    /// and can be unlocked and used by calling `Mutex.try_lock`.
-    ///
-    /// For error results, see `Error`.
+    /**
+    attempt to allocate memory of type T, returning `Result<Mutex<T>>`.
+
+    If `Ok(Mutex<T>)`, the memory will have been initialized to `T.default`
+    and can be unlocked and used by calling `Mutex.try_lock`.
+
+    This function uses a "best fit" approach with bins to speed it up.
+    It will search the lowest bin that might fit and will return the free
+    block with the closest fit.
+
+    The longest time this can take is `O(f + i)` where `f` is the number of
+    free blocks in the lowest bin that matches and `i` is the total number
+    of indexes.
+
+    For error results, see `Error`.
+    */
     pub fn alloc<T: Default>(&self) -> Result<Mutex<T>> {
+        self._alloc(false)
+    }
+
+    /**
+    See `Pool.alloc` for description of use.
+
+    This allocation method should be used if allocation is time-critical.
+    Unlike `Pool.alloc`, this method guarantees O(i) allocation time,
+    where `i` is the number of indexes (but is affected by `index_cache`).
+
+    `alloc_fast` works by only looking in freed bins that are guaranteed
+    to fit the requested size of memory. On average, `alloc_fast` will lead
+    to more fragmentation of memory, and therefore require `defrag` to be
+    called more often.
+
+    Also, this method may return Error::Fragmented when `Pool.alloc`
+    returns Ok, due to the fact that not all possible free blocks were
+    checked.
+    */
+    pub fn alloc_fast<T: Default>(&self) -> Result<Mutex<T>> {
+        self._alloc(true)
+    }
+
+    #[inline]
+    fn _alloc<T: Default>(&self, fast: bool) -> Result<Mutex<T>> {
         unsafe {
             let actual_size: usize = mem::size_of::<Full>() + mem::size_of::<T>();
             let blocks = ceil(actual_size, mem::size_of::<Block>());
             if blocks > (*self.raw).len_blocks() as usize {
                 return Err(Error::InvalidSize);
             }
-            let i = try!((*self.raw).alloc_index(blocks as u16, false));
+            let i = try!((*self.raw).alloc_index(blocks as u16, fast));
             let index = (*self.raw).index(i);
             let mut p = (*self.raw).data(index.block()) as *mut T;
             *p = T::default();
@@ -160,22 +198,36 @@ impl Pool {
         }
     }
 
-    /// attempt to allocate a slice of memory with `len` of `T` elements,
-    /// returning `Result<SliceMutex<T>>`.
-    ///
-    /// If `Ok(SliceMutex<T>)`, all elements of the slice will have been
-    /// initialized to `T.default` and can be unlocked and used by calling
-    /// `Mutex.try_lock`.
-    ///
-    /// For error results, see `Error`.
+    /**
+    Attempt to allocate a slice of memory with `len` of `T` elements,
+    returning `Result<SliceMutex<T>>`.
+
+    If `Ok(SliceMutex<T>)`, all elements of the slice will have been
+    initialized to `T.default` and can be unlocked and used by calling
+    `Mutex.try_lock`.
+
+    For additional information, see `Pool.alloc`
+    */
     pub fn alloc_slice<T: Default>(&self, len: BlockLoc) -> Result<SliceMutex<T>> {
+        self._alloc_slice(len, false)
+    }
+
+    /// See `Pool.alloc_sice` for description of use.
+    ///
+    /// See `Pool.alloc_fast` for description of performance characteristics.
+    pub fn alloc_slice_fast<T: Default>(&self, len: BlockLoc) -> Result<SliceMutex<T>> {
+        self._alloc_slice(len, true)
+    }
+
+    #[inline]
+    fn _alloc_slice<T: Default>(&self, len: BlockLoc, fast: bool) -> Result<SliceMutex<T>> {
         unsafe {
             let actual_size: usize = mem::size_of::<Full>() + mem::size_of::<T>() * len as usize;
             let blocks = ceil(actual_size, mem::size_of::<Block>());
             if blocks > (*self.raw).len_blocks() as usize {
                 return Err(Error::InvalidSize);
             }
-            let i = try!((*self.raw).alloc_index(blocks as u16, false));
+            let i = try!((*self.raw).alloc_index(blocks as u16, fast));
             let index = (*self.raw).index(i);
             let mut p = (*self.raw).data(index.block()) as *mut T;
             for _ in 0..len {
@@ -199,9 +251,14 @@ impl Pool {
         unsafe { (*self.raw).clean() }
     }
 
+    /// !! UNSTABLE !!
+    ///
     /// defragment the `Pool`, combining blocks of
     /// used memory and increasing the size of the
     /// heap.
+    ///
+    /// This method is currently blocking, options are being looked into
+    /// to guarantee some kind of maximum time per call.
     pub fn defrag(&self) {
         unsafe { (*self.raw).defrag() }
     }

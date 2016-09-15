@@ -42,6 +42,8 @@ impl panic::UnwindSafe for Pool {}
 struct Stats {
     loops: usize,
     allocs: usize,
+    allocs_fast: usize,
+    alloc_skips: usize,
     frees: usize,
     cleans: usize,
     defrags: usize,
@@ -60,6 +62,7 @@ enum FullActions {
 #[derive(Debug, Copy, Clone)]
 enum EmptyActions {
     Alloc,
+    AllocFast,
     Skip,
 }
 
@@ -141,13 +144,17 @@ impl<'a> Allocation<'a> {
     }
 
     /// allocate some new data and fill it
-    fn alloc(&mut self, t: &mut Tracker) -> TResult<()> {
+    fn alloc(&mut self, t: &mut Tracker, fast: bool) -> TResult<()> {
         assert!(self.mutex.is_none());
         let divider = self.pool.size() /
             (mem::size_of::<Fill>() * 64);
         let len = t.gen.gen::<u16>() % divider as u16;
         t.clock.start();
-        let slice = self.pool.alloc_slice::<Fill>(len);
+        let slice = if fast {
+            self.pool.alloc_slice_fast::<Fill>(len)
+        } else {
+            self.pool.alloc_slice::<Fill>(len)
+        };
         t.clock.stop();
         self.mutex = Some(match slice {
             Ok(m) => {
@@ -209,11 +216,10 @@ impl<'a> Allocation<'a> {
                 },
             },
             // there is no data, should we allocate it?
-            None => {
-                match t.gen.gen::<usize>() % 100 {
-                    0...50 => try!(self.alloc(t)),
-                    _ => {},
-                }
+            None => match sample(&mut t.gen, &t.settings.empty_chances, 1)[0] {
+                &EmptyActions::Alloc => try!(self.alloc(t, false)),
+                &EmptyActions::AllocFast => try!(self.alloc(t, true)),
+                &EmptyActions::Skip => t.stats.alloc_skips += 1,
             },
         }
         try!(self.assert_valid());
@@ -322,4 +328,15 @@ fn bench_small_cache(b: &mut Bencher) {
     };
     settings.full_chances.push(FullActions::Clean);
     run_test("bench_small_cache", settings.clone(), BLOCKS, INDEXES, INDEXES / 20);
+}
+
+#[bench]
+fn bench_fast_large_cache(b: &mut Bencher) {
+    let mut settings = Settings {
+        loops: LOOPS,
+        full_chances: Vec::from_iter([FullActions::Deallocate; 9].iter().cloned()),
+        empty_chances: vec![EmptyActions::AllocFast],
+    };
+    settings.full_chances.push(FullActions::Clean);
+    run_test("bench_large_cache", settings.clone(), BLOCKS, INDEXES, INDEXES);
 }
