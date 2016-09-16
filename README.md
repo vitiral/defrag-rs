@@ -2,7 +2,7 @@
 https://travis-ci.org/vitiral/defrag-rs)
 # defrag: safe and efficient memory manager for microcontrollers
 
-**This library is in the Alpha stage and is subject to change**
+**This library is in the Beta stage and is subject to change**
 
 This library aims to bring safe heap memory management
 to microcontrollers. Combined with rust's excellent type system and

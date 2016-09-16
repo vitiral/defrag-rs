@@ -1,6 +1,6 @@
 [package]
 name = "defrag"
-version = "0.1.2"
+version = "0.1.3"
 description = "safe and low overhead memory manager for microcontrollers"
 documentation = "https://docs.rs/defrag"
 repository = "https://github.com/vitiral/defrag-rs"
