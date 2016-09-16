@@ -40,10 +40,10 @@ various strategies for utilzing freed blocks of memory.
 #![no_std]
 
 // test utilities
-#[cfg(test)] extern crate test;
+extern crate test;
+
 #[cfg(test)]
 #[macro_use] extern crate std;
-#[cfg(test)] use std::prelude::*;
 #[cfg(test)] extern crate rand;
 #[cfg(test)] extern crate stopwatch;
 

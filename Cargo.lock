@@ -1,16 +1,16 @@
 [root]
 name = "defrag"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
- "cbuf 0.1.0 (git+https://github.com/dpc/cbuf-rs)",
+ "cbuf 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "stopwatch 0.0.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "cbuf"
-version = "0.1.0"
-source = "git+https://github.com/dpc/cbuf-rs#517d33961f866d59c10206521e5bedff7a15e912"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "libc"
@@ -105,7 +105,7 @@ dependencies = [
 ]
 
 [metadata]
-"checksum cbuf 0.1.0 (git+https://github.com/dpc/cbuf-rs)" = "<none>"
+"checksum cbuf 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "9870ac074b1ad75aafa21098e9600f80ae6f1fdcb5fe77cf9ad1015981b61fff"
 "checksum libc 0.2.15 (registry+https://github.com/rust-lang/crates.io-index)" = "23e3757828fa702a20072c37ff47938e9dd331b92fac6e223d26d4b7a55f7ee2"
 "checksum num 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)" = "5a9699207fab8b02bd0e56f8f06fee3f26d640303130de548898b4c9704f6d01"
 "checksum num-bigint 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)" = "88b14378471f7c2adc5262f05b4701ef53e8da376453a8d8fee48e51db745e49"

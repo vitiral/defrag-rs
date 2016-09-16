@@ -383,7 +383,7 @@ impl FreedBins {
         let bin = self.get_insert_bin(blocks);
         let poolptr = pool as *mut RawPool;
         for b in bin..(NUM_BINS - 1) {
-            if let Some(mut current_free) = self.bins[b as usize].root(&mut *poolptr) {
+            if let Some(mut current_free) = self.bins[b as usize].root(&*poolptr) {
                 // there is free data in this bin, search the bin for the
                 // best fit value (there isn't going to be a better fit at higher bins)
                 let mut best = current_free;
@@ -520,7 +520,7 @@ fn test_bins() {
         // allocate and free through normal process
         let bin1 = Vec::from_iter(
             (0..5).map(|_| pool.alloc_index(10, true).unwrap()));
-        let bin1_blocks: Vec<_> = bin1.iter().map(|i| pool.index(*i).block()).collect();
+        // let bin1_blocks: Vec<_> = bin1.iter().map(|i| pool.index(*i).block()).collect();
 
         let bin2 = Vec::from_iter(
             (0..5).map(|_| pool.alloc_index(20, true).unwrap()));
@@ -537,7 +537,8 @@ fn test_bins() {
         assert_eq!(pool.freed_bins.len, 10);
 
         // go through bin1, asserting that it makes sense
-        let bin1_freed: Vec<_> = bin1_blocks.iter().map(|b| (*p).freed_mut(*b)).collect();
+        // let bin1_freed: Vec<_> = bin1_blocks.iter().map(|b| (*p).freed_mut(*b)).collect();
+
         let b1_0 = pool.freed_mut(0);
         let b1_1 = pool.freed_mut(10);
         let b1_2 = pool.freed_mut(20);
@@ -545,8 +546,8 @@ fn test_bins() {
         let b1_4 = pool.freed_mut(40);
 
         let b2_0 = pool.freed_mut(50);
-        let b2_1 = pool.freed_mut(70);
-        let b2_2 = pool.freed_mut(90);
+        // let b2_1 = pool.freed_mut(70);
+        // let b2_2 = pool.freed_mut(90);
         let b2_3 = pool.freed_mut(110);
         let b2_4 = pool.freed_mut(130);
 

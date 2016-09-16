@@ -589,9 +589,8 @@ impl RawPool {
             return Err(Error::OutOfIndexes);
         }
 
-        match self.index_cache.get() {
-            Some(i) => return Ok(i),
-            None => {},
+        if let Some(i) = self.index_cache.get() {
+            return Ok(i);
         }
 
         let mut i = (self.last_index_used + 1) % self.len_indexes();
@@ -609,7 +608,6 @@ impl RawPool {
     unsafe fn use_freed(&mut self, blocks: BlockLoc, fast: bool)
     -> Option<BlockLoc>{
         let selfptr = self as *mut RawPool;
-        let fast = true;
         if fast {
             match (*selfptr).freed_bins.pop_fast(self, blocks) {
                 Some(f) => Some(f),
@@ -787,7 +785,7 @@ fn test_indexes() {
         let free_block = pool.index(allocs.0).block();
         pool.dealloc_index(allocs.0);
         pool.dealloc_index(allocs.1);
-        indexes_allocated -= 2;
+        // indexes_allocated -= 2;
 
         println!("cleaning freed");
         // println!("{}", pool.display());

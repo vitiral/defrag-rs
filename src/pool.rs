@@ -1,4 +1,3 @@
-use core::result;
 use core::default::Default;
 use core::ops::{Deref, DerefMut};
 use core::marker::PhantomData;
@@ -122,7 +121,7 @@ impl Pool {
 
             let cache_slice: &'static mut [IndexLoc] = slice::from_raw_parts_mut(
                 cache, cache_len as usize);
-            let mut index_cache = CBuf::new(cache_slice);
+            let index_cache = CBuf::new(cache_slice);
 
             // initialize our memory and return
             *pool = RawPool::new(indexes, num_indexes, blocks, num_blocks as u16, index_cache);

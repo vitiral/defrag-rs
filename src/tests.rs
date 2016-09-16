@@ -15,8 +15,7 @@ It will have:
       made.
 */
 
-use std::thread;
-use std::prelude::*;
+
 use std::string::String;
 use std::vec::Vec;
 use std::panic;
@@ -91,7 +90,7 @@ struct Tracker {
 impl Tracker {
     pub fn new(settings: Settings) -> Tracker {
         let seed = [1, 2, 3, 4];
-        let mut gen = XorShiftRng::from_seed(seed);
+        let gen = XorShiftRng::from_seed(seed);
         Tracker { gen: gen,
                   clock: Stopwatch::new(), test_clock: Stopwatch::new(),
                   stats: Stats::default(),
@@ -101,7 +100,6 @@ impl Tracker {
 }
 
 struct Allocation<'a> {
-    i: usize,
     pool: &'a Pool,
     data: Vec<Fill>,
     mutex: Option<super::SliceMutex<'a, Fill>>,
@@ -128,14 +126,14 @@ impl<'a> Allocation<'a> {
     }
 
     /// fill the Allocation up with data, don't check
-    fn fill(&mut self, t: &mut Tracker) -> Result<()> {
+    fn fill(&mut self, t: &mut Tracker) -> TResult<()> {
         let mutex = match self.mutex {
             Some(ref mut m) => m,
             None => return Ok(()),
         };
         let edata = &mut self.data;
         let mut pdata = mutex.lock();
-        for (i, (e, p)) in edata.iter_mut().zip(pdata.iter_mut()).enumerate() {
+        for (e, p) in edata.iter_mut().zip(pdata.iter_mut()) {
             let val = t.gen.gen::<Fill>();
             *e = val;
             *p = val;
@@ -188,7 +186,7 @@ impl<'a> Allocation<'a> {
         for _ in 0..len {
             self.data.push(0);
         }
-        self.fill(t);
+        try!(self.fill(t));
         Ok(())
     }
 
@@ -212,7 +210,7 @@ impl<'a> Allocation<'a> {
                 },
                 &FullActions::Change => {
                     // change the data
-                    self.fill(t);
+                    try!(self.fill(t));
                 },
             },
             // there is no data, should we allocate it?
@@ -231,7 +229,7 @@ impl<'a> Allocation<'a> {
 // TODO: several parameters (like number of loops) need to be moved into settings
 // and then several "benchmark" tests need to be created that can only be run in release
 // mode... in release 1000 loops takes < 1 sec, in debug mode it takes over a minute.
-fn do_test(pool: &Pool, allocs: &mut Vec<Allocation>, track: &mut Tracker) {
+fn do_test(allocs: &mut Vec<Allocation>, track: &mut Tracker) {
     println!("len allocs: {}", allocs.len());
     println!("some random values: {}, {}, {}",
              track.gen.gen::<u16>(), track.gen.gen::<u16>(), track.gen.gen::<u16>());
@@ -250,18 +248,17 @@ fn run_test(name: &str, settings: Settings,
     let mut track = Tracker::new(settings);
 
     let size = blocks as usize * mem::size_of::<Block>();
-    let mut pool = Pool::new(size, indexes, index_cache).expect("can't get pool");
+    let pool = Pool::new(size, indexes, index_cache).expect("can't get pool");
     let mut allocs = Vec::from_iter(
         (0..pool.len_indexes())
-            .map(|i| Allocation {
-                i: i as usize,
+            .map(|_| Allocation {
                 pool: &pool,
                 data: Vec::new(),
                 mutex: None,
             }));
 
     let res = panic::catch_unwind(panic::AssertUnwindSafe(
-        || do_test(&pool, &mut allocs, &mut track)));
+        || do_test(&mut allocs, &mut track)));
     println!("## {}", name);
     match res {
         Ok(_) => {},
@@ -294,11 +291,13 @@ fn small_integration() {
         empty_chances: vec![EmptyActions::Alloc],
     };
     settings.full_chances.push(FullActions::Clean);
+    settings.full_chances.push(FullActions::Change);
+    settings.empty_chances.push(EmptyActions::Skip);
     run_test("small_integration", settings, BLOCKS, INDEXES, INDEXES / 10);
 }
 
 #[bench]
-fn bench_no_cache(b: &mut Bencher) {
+fn bench_no_cache(_: &mut Bencher) {
     let mut settings = Settings {
         loops: LOOPS,
         full_chances: Vec::from_iter([FullActions::Deallocate; 9].iter().cloned()),
@@ -309,7 +308,7 @@ fn bench_no_cache(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_large_cache(b: &mut Bencher) {
+fn bench_large_cache(_: &mut Bencher) {
     let mut settings = Settings {
         loops: LOOPS,
         full_chances: Vec::from_iter([FullActions::Deallocate; 9].iter().cloned()),
@@ -320,7 +319,7 @@ fn bench_large_cache(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_small_cache(b: &mut Bencher) {
+fn bench_small_cache(_: &mut Bencher) {
     let mut settings = Settings {
         loops: LOOPS,
         full_chances: Vec::from_iter([FullActions::Deallocate; 9].iter().cloned()),
@@ -331,12 +330,13 @@ fn bench_small_cache(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_fast_large_cache(b: &mut Bencher) {
+fn bench_fast_large_cache(_: &mut Bencher) {
+
     let mut settings = Settings {
         loops: LOOPS,
         full_chances: Vec::from_iter([FullActions::Deallocate; 9].iter().cloned()),
         empty_chances: vec![EmptyActions::AllocFast],
     };
     settings.full_chances.push(FullActions::Clean);
-    run_test("bench_large_cache", settings.clone(), BLOCKS, INDEXES, INDEXES);
+    run_test("bench_fast_large_cache", settings.clone(), BLOCKS, INDEXES, INDEXES);
 }

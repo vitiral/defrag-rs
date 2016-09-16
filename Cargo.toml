@@ -1,6 +1,6 @@
 [package]
 name = "defrag"
-version = "0.1.1"
+version = "0.1.2"
 description = "safe and low overhead memory manager for microcontrollers"
 documentation = "https://docs.rs/defrag"
 repository = "https://github.com/vitiral/defrag-rs"
@@ -10,9 +10,13 @@ readme = "README.md"
 license = "MIT"
 
 [dependencies]
-cbuf = {git="https://github.com/dpc/cbuf-rs"}
-# cbuf = "*"
+# cbuf = {git="https://github.com/dpc/cbuf-rs"}
+cbuf = "0.1.*"
 
 [dev-dependencies]
 rand = "0.3"
 stopwatch = "0.0.7"
+
+[features]
+default = []
+no_std = []
