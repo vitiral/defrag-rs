@@ -18,14 +18,14 @@ pub unsafe fn base_clean(pool: &mut RawPool,
                         // combines the last with the current
                         // and set last_freed to the new value
                         Some((**last).join(pool, free))
-                    },
+                    }
                     None => {
                         // last_freed is None, cannot combine
                         // but this is the new "last block"
                         Some(free as *mut Free)
                     }
                 }
-            },
+            }
             BlockType::Full => {
                 let full = (*block).as_full_mut();
                 last_freed = full_fn(pool, last_freed, full);

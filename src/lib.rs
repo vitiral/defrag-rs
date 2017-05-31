@@ -43,9 +43,12 @@ various strategies for utilzing freed blocks of memory.
 extern crate test;
 
 #[cfg(test)]
-#[macro_use] extern crate std;
-#[cfg(test)] extern crate rand;
-#[cfg(test)] extern crate stopwatch;
+#[macro_use]
+extern crate std;
+#[cfg(test)]
+extern crate rand;
+#[cfg(test)]
+extern crate stopwatch;
 
 extern crate alloc;
 extern crate cbuf;
@@ -61,6 +64,4 @@ mod tests;
 
 pub use types::{Error, Result};
 pub use raw_pool::Block;
-pub use pool::{Pool,
-               Mutex, Value,
-               SliceMutex, Slice};
+pub use pool::{Pool, Mutex, Value, SliceMutex, Slice};

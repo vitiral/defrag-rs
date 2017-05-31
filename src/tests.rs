@@ -91,10 +91,12 @@ impl Tracker {
     pub fn new(settings: Settings) -> Tracker {
         let seed = [1, 2, 3, 4];
         let gen = XorShiftRng::from_seed(seed);
-        Tracker { gen: gen,
-                  clock: Stopwatch::new(), test_clock: Stopwatch::new(),
-                  stats: Stats::default(),
-                  settings: settings,
+        Tracker {
+            gen: gen,
+            clock: Stopwatch::new(),
+            test_clock: Stopwatch::new(),
+            stats: Stats::default(),
+            settings: settings,
         }
     }
 }
@@ -144,8 +146,7 @@ impl<'a> Allocation<'a> {
     /// allocate some new data and fill it
     fn alloc(&mut self, t: &mut Tracker, fast: bool) -> TResult<()> {
         assert!(self.mutex.is_none());
-        let divider = self.pool.size() /
-            (mem::size_of::<Fill>() * 64);
+        let divider = self.pool.size() / (mem::size_of::<Fill>() * 64);
         let len = t.gen.gen::<u16>() % divider as u16;
         t.clock.start();
         let slice = if fast {
@@ -154,34 +155,37 @@ impl<'a> Allocation<'a> {
             self.pool.alloc_slice::<Fill>(len)
         };
         t.clock.stop();
-        self.mutex = Some(match slice {
-            Ok(m) => {
-                t.stats.allocs += 1;
-                m
-            },
-            Err(e) => match e {
-                Error::OutOfMemory => {
-                    t.stats.out_of_mems += 1;
-                    return Ok(()); // not allocated
-                },
-                Error::Fragmented => {
-                    // auto-defrag whenever it is encountered
-                    t.clock.start();
-                    self.pool.defrag();
-                    let slice = self.pool.alloc_slice::<Fill>(len);
-                    t.clock.stop();
-                    t.stats.defrags += 1;
-                    match slice {
-                        Ok(m) => {
-                            t.stats.allocs += 1;
-                            m
-                        },
-                        Err(e) => return Err(format!("alloc::alloc_slice2: {:?}", e)),
-                    }
-                }
-                _ => return Err(format!("alloc::aloc_slice:{:?}", e)),
-            }
-        });
+        self.mutex =
+            Some(match slice {
+                     Ok(m) => {
+                         t.stats.allocs += 1;
+                         m
+                     }
+                     Err(e) => {
+                         match e {
+                             Error::OutOfMemory => {
+                                 t.stats.out_of_mems += 1;
+                                 return Ok(()); // not allocated
+                             }
+                             Error::Fragmented => {
+                                 // auto-defrag whenever it is encountered
+                                 t.clock.start();
+                                 self.pool.defrag();
+                                 let slice = self.pool.alloc_slice::<Fill>(len);
+                                 t.clock.stop();
+                                 t.stats.defrags += 1;
+                                 match slice {
+                                     Ok(m) => {
+                                         t.stats.allocs += 1;
+                                         m
+                                     }
+                                     Err(e) => return Err(format!("alloc::alloc_slice2: {:?}", e)),
+                                 }
+                             }
+                             _ => return Err(format!("alloc::aloc_slice:{:?}", e)),
+                         }
+                     }
+                 });
         self.data.clear();
         for _ in 0..len {
             self.data.push(0);
@@ -195,30 +199,34 @@ impl<'a> Allocation<'a> {
         try!(self.assert_valid());
         match self.mutex {
             // we have data, we need to decide what to do with it
-            Some(_) => match sample(&mut t.gen, &t.settings.full_chances, 1)[0] {
-                &FullActions::Deallocate => {
-                    // deallocate the data
-                    self.mutex = None;
-                    t.stats.frees += 1;
-                },
-                &FullActions::Clean => {
-                    // clean the data
-                    t.clock.start();
-                    self.pool.clean();
-                    t.clock.stop();
-                    t.stats.cleans += 1;
-                },
-                &FullActions::Change => {
-                    // change the data
-                    try!(self.fill(t));
-                },
-            },
+            Some(_) => {
+                match sample(&mut t.gen, &t.settings.full_chances, 1)[0] {
+                    &FullActions::Deallocate => {
+                        // deallocate the data
+                        self.mutex = None;
+                        t.stats.frees += 1;
+                    }
+                    &FullActions::Clean => {
+                        // clean the data
+                        t.clock.start();
+                        self.pool.clean();
+                        t.clock.stop();
+                        t.stats.cleans += 1;
+                    }
+                    &FullActions::Change => {
+                        // change the data
+                        try!(self.fill(t));
+                    }
+                }
+            }
             // there is no data, should we allocate it?
-            None => match sample(&mut t.gen, &t.settings.empty_chances, 1)[0] {
-                &EmptyActions::Alloc => try!(self.alloc(t, false)),
-                &EmptyActions::AllocFast => try!(self.alloc(t, true)),
-                &EmptyActions::Skip => t.stats.alloc_skips += 1,
-            },
+            None => {
+                match sample(&mut t.gen, &t.settings.empty_chances, 1)[0] {
+                    &EmptyActions::Alloc => try!(self.alloc(t, false)),
+                    &EmptyActions::AllocFast => try!(self.alloc(t, true)),
+                    &EmptyActions::Skip => t.stats.alloc_skips += 1,
+                }
+            }
         }
         try!(self.assert_valid());
         Ok(())
@@ -232,7 +240,9 @@ impl<'a> Allocation<'a> {
 fn do_test(allocs: &mut Vec<Allocation>, track: &mut Tracker) {
     println!("len allocs: {}", allocs.len());
     println!("some random values: {}, {}, {}",
-             track.gen.gen::<u16>(), track.gen.gen::<u16>(), track.gen.gen::<u16>());
+             track.gen.gen::<u16>(),
+             track.gen.gen::<u16>(),
+             track.gen.gen::<u16>());
     track.test_clock.start();
     for _ in 0..track.settings.loops {
         for alloc in allocs.iter_mut() {
@@ -243,25 +253,27 @@ fn do_test(allocs: &mut Vec<Allocation>, track: &mut Tracker) {
     track.test_clock.stop();
 }
 
-fn run_test(name: &str, settings: Settings,
-            blocks: BlockLoc, indexes: IndexLoc, index_cache: IndexLoc) {
+fn run_test(name: &str,
+            settings: Settings,
+            blocks: BlockLoc,
+            indexes: IndexLoc,
+            index_cache: IndexLoc) {
     let mut track = Tracker::new(settings);
 
     let size = blocks as usize * mem::size_of::<Block>();
     let pool = Pool::new(size, indexes, index_cache).expect("can't get pool");
-    let mut allocs = Vec::from_iter(
-        (0..pool.len_indexes())
-            .map(|_| Allocation {
-                pool: &pool,
-                data: Vec::new(),
-                mutex: None,
-            }));
+    let mut allocs = Vec::from_iter((0..pool.len_indexes()).map(|_| {
+                                                                    Allocation {
+                                                                        pool: &pool,
+                                                                        data: Vec::new(),
+                                                                        mutex: None,
+                                                                    }
+                                                                }));
 
-    let res = panic::catch_unwind(panic::AssertUnwindSafe(
-        || do_test(&mut allocs, &mut track)));
+    let res = panic::catch_unwind(panic::AssertUnwindSafe(|| do_test(&mut allocs, &mut track)));
     println!("## {}", name);
     match res {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(_) => {
             println!("{}", pool.display());
         }
@@ -271,9 +283,9 @@ fn run_test(name: &str, settings: Settings,
              track.clock.elapsed_ms());
     println!("STATS: {:?}", track.stats);
     match res {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => {
-             panic::resume_unwind(e);
+            panic::resume_unwind(e);
         }
     };
 }
@@ -315,7 +327,11 @@ fn bench_large_cache(_: &mut Bencher) {
         empty_chances: vec![EmptyActions::Alloc],
     };
     settings.full_chances.push(FullActions::Clean);
-    run_test("bench_large_cache", settings.clone(), BLOCKS, INDEXES, INDEXES);
+    run_test("bench_large_cache",
+             settings.clone(),
+             BLOCKS,
+             INDEXES,
+             INDEXES);
 }
 
 #[bench]
@@ -326,7 +342,11 @@ fn bench_small_cache(_: &mut Bencher) {
         empty_chances: vec![EmptyActions::Alloc],
     };
     settings.full_chances.push(FullActions::Clean);
-    run_test("bench_small_cache", settings.clone(), BLOCKS, INDEXES, INDEXES / 20);
+    run_test("bench_small_cache",
+             settings.clone(),
+             BLOCKS,
+             INDEXES,
+             INDEXES / 20);
 }
 
 #[bench]
@@ -338,5 +358,9 @@ fn bench_fast_large_cache(_: &mut Bencher) {
         empty_chances: vec![EmptyActions::AllocFast],
     };
     settings.full_chances.push(FullActions::Clean);
-    run_test("bench_fast_large_cache", settings.clone(), BLOCKS, INDEXES, INDEXES);
+    run_test("bench_fast_large_cache",
+             settings.clone(),
+             BLOCKS,
+             INDEXES,
+             INDEXES);
 }

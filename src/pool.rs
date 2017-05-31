@@ -12,7 +12,7 @@ use super::raw_pool::{RawPool, Index, Block, Full, DisplayPool};
 
 /// return the ceiling of a / b
 fn ceil(a: usize, b: usize) -> usize {
-    a / b + (if a % b != 0 {1} else {0})
+    a / b + (if a % b != 0 { 1 } else { 0 })
 }
 
 /**
@@ -77,9 +77,8 @@ impl Pool {
             index_cache
         };
         let num_blocks = ceil(size, mem::size_of::<Block>());
-        if indexes > IndexLoc::max_value() / 2
-            || num_blocks > BlockLoc::max_value() as usize / 2 {
-            return Err(Error::InvalidSize)
+        if indexes > IndexLoc::max_value() / 2 || num_blocks > BlockLoc::max_value() as usize / 2 {
+            return Err(Error::InvalidSize);
         }
         let num_indexes = indexes;
         unsafe {
@@ -97,8 +96,7 @@ impl Pool {
             let cache = heap::allocate(size_cache, align);
 
             // if any failed to allocate, deallocate in reverse order
-            if pool.is_null() || indexes.is_null() || blocks.is_null() ||
-                    cache.is_null() {
+            if pool.is_null() || indexes.is_null() || blocks.is_null() || cache.is_null() {
                 if !cache.is_null() {
                     heap::deallocate(cache, size_cache as usize, align);
                 }
@@ -119,8 +117,8 @@ impl Pool {
             let blocks = blocks as *mut Block;
             let cache = cache as *mut IndexLoc;
 
-            let cache_slice: &'static mut [IndexLoc] = slice::from_raw_parts_mut(
-                cache, cache_len as usize);
+            let cache_slice: &'static mut [IndexLoc] =
+                slice::from_raw_parts_mut(cache, cache_len as usize);
             let index_cache = CBuf::new(cache_slice);
 
             // initialize our memory and return
@@ -193,7 +191,11 @@ impl Pool {
             let index = (*self.raw).index(i);
             let mut p = (*self.raw).data(index.block()) as *mut T;
             *p = T::default();
-            Ok(Mutex{index: i, pool: self, _type: PhantomData})
+            Ok(Mutex {
+                   index: i,
+                   pool: self,
+                   _type: PhantomData,
+               })
         }
     }
 
@@ -233,16 +235,19 @@ impl Pool {
                 *p = T::default();
                 p = p.offset(1);
             }
-            Ok(SliceMutex{index: i, len: len, pool: self, _type: PhantomData})
+            Ok(SliceMutex {
+                   index: i,
+                   len: len,
+                   pool: self,
+                   _type: PhantomData,
+               })
         }
     }
 
 
     /// call this to be able to printout the status of the `Pool`.
     pub fn display(&self) -> DisplayPool {
-        unsafe {
-            (*self.raw).display()
-        }
+        unsafe { (*self.raw).display() }
     }
 
     /// clean the `Pool`, combining contigous blocks of free memory.
@@ -313,16 +318,14 @@ impl<'mutex, T> Mutex<'mutex, T> {
             assert!(!full.is_locked());
             full.set_lock();
             assert!(full.is_locked());
-            Value {__lock: self}
+            Value { __lock: self }
         }
     }
 }
 
 impl<'a, T> Drop for Mutex<'a, T> {
     fn drop(&mut self) {
-        unsafe {
-            (*self.pool.raw).dealloc_index(self.index)
-        }
+        unsafe { (*self.pool.raw).dealloc_index(self.index) }
     }
 }
 
@@ -385,9 +388,7 @@ pub struct SliceMutex<'a, T> {
 
 impl<'a, T> Drop for SliceMutex<'a, T> {
     fn drop(&mut self) {
-        unsafe {
-            (*self.pool.raw).dealloc_index(self.index)
-        }
+        unsafe { (*self.pool.raw).dealloc_index(self.index) }
     }
 }
 
@@ -406,7 +407,7 @@ impl<'mutex, T> SliceMutex<'mutex, T> {
             assert!(!full.is_locked());
             full.set_lock();
             assert!(full.is_locked());
-            Slice {__lock: self}
+            Slice { __lock: self }
         }
     }
 }

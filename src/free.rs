@@ -1,6 +1,9 @@
-#[cfg(test)] use std::vec::Vec;
-#[cfg(test)] use std::iter::FromIterator;
-#[cfg(test)] use core::mem;
+#[cfg(test)]
+use std::vec::Vec;
+#[cfg(test)]
+use std::iter::FromIterator;
+#[cfg(test)]
+use core::mem;
 
 use core::default::Default;
 use core::fmt;
@@ -18,11 +21,11 @@ use super::raw_pool::*;
 pub struct Free {
     // NOTE: DO NOT MOVE `_blocks`, IT IS SWAPPED WITH `Full._blocks`
     // The first bit of `_blocks` is always 0 for Free structs
-    pub _blocks: BlockLoc,        // size of this freed memory
-    pub _block: BlockLoc,          // block location of this struct
-    pub _prev: BlockLoc,          // location of previous freed memory
-    pub _next: BlockLoc,          // location of next freed memory
-    // data after this (until block + blocks) is invalid
+    pub _blocks: BlockLoc, // size of this freed memory
+    pub _block: BlockLoc, // block location of this struct
+    pub _prev: BlockLoc, // location of previous freed memory
+    pub _next: BlockLoc, // location of next freed memory
+                         // data after this (until block + blocks) is invalid
 }
 
 impl fmt::Debug for Free {
@@ -37,12 +40,15 @@ impl fmt::Debug for Free {
         } else {
             self._next as isize
         };
-        let isvalid = if self.is_valid() {" "} else {"!"};
-        write!(f, "Free{}{{blocks: {}, block: {}, prev: {}, next: {}}}{}",
+        let isvalid = if self.is_valid() { " " } else { "!" };
+        write!(f,
+               "Free{}{{blocks: {}, block: {}, prev: {}, next: {}}}{}",
                isvalid,
                self._blocks & BLOCK_BITMAP,
                self._block & BLOCK_BITMAP,
-               prev, next, isvalid)
+               prev,
+               next,
+               isvalid)
     }
 }
 
@@ -160,7 +166,7 @@ impl Free {
                     Some(next) => {
                         next.set_prev(&mut *poolp, None);
                         assert_eq!(pool.freed_bins.bins[bin as usize]._root, next.block());
-                    },
+                    }
                     None => {
                         pool.freed_bins.bins[bin as usize]._root = BLOCK_NULL;
                     }
@@ -204,7 +210,9 @@ impl Free {
 //         let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
 //         let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
 
-//         let mut pool = RawPool::new(iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc);
+//         let mut pool = RawPool::new(
+//             iptr, indexes.len() as IndexLoc, bptr, blocks.len() as BlockLoc
+//         );
 //         let p = &mut pool as *mut RawPool;
 
 //         // ok, we are completely ignoring bins for this, set everything
@@ -295,7 +303,7 @@ pub struct FreedRoot {
 
 impl Default for FreedRoot {
     fn default() -> FreedRoot {
-        FreedRoot {_root: BLOCK_NULL}
+        FreedRoot { _root: BLOCK_NULL }
     }
 }
 
@@ -342,13 +350,13 @@ impl FreedBins {
     /// inserting a Free value
     pub fn get_insert_bin(&self, blocks: BlockLoc) -> u8 {
         match blocks {
-            1   ...3     => 0,
-            4   ...15    => 1,
-            16  ...63    => 2,
-            64  ...255   => 3,
-            256 ...1023  => 4,
-            1024...4095  => 5,
-            _            => 6,
+            1...3 => 0,
+            4...15 => 1,
+            16...63 => 2,
+            64...255 => 3,
+            256...1023 => 4,
+            1024...4095 => 5,
+            _ => 6,
         }
     }
 
@@ -368,14 +376,15 @@ impl FreedBins {
     /// insert a Free block into a freed bin
     /// this is the only method that Pool uses to store deallocated indexes
     pub unsafe fn insert(&mut self, pool: &mut RawPool, freed: &mut Free) {
-        assert!(freed.block() + freed.blocks() <= pool.heap_block, "{:?}", freed);
+        assert!(freed.block() + freed.blocks() <= pool.heap_block,
+                "{:?}",
+                freed);
         self.len += 1;
         let bin = self.get_insert_bin(freed.blocks());
         self.bins[bin as usize].insert_root(pool, freed);
     }
 
-    pub unsafe fn pop_slow(&mut self, pool: &mut RawPool, blocks: BlockLoc)
-                           -> Option<BlockLoc> {
+    pub unsafe fn pop_slow(&mut self, pool: &mut RawPool, blocks: BlockLoc) -> Option<BlockLoc> {
         assert_ne!(blocks, 0);
         if self.len == 0 {
             return None;
@@ -416,8 +425,7 @@ impl FreedBins {
     of the data at the `block` output location is valid after this operation is
     performed.
     */
-    pub unsafe fn pop_fast(&mut self, pool: &mut RawPool, blocks: BlockLoc)
-                           -> Option<BlockLoc> {
+    pub unsafe fn pop_fast(&mut self, pool: &mut RawPool, blocks: BlockLoc) -> Option<BlockLoc> {
         assert_ne!(blocks, 0);
         if self.len == 0 {
             return None;
@@ -426,13 +434,13 @@ impl FreedBins {
         // the starting bin is where we KNOW we can find the required amount of
         // data (if it has any) and is the fastest way to retrive data from a bin.
         let bin: u8 = match blocks {
-            1            => 0,
-            2   ...4     => 1,
-            5   ...16    => 2,
-            17  ...64    => 3,
-            65  ...256   => 4,
-            257 ...1024  => 5,
-            _            => 6,
+            1 => 0,
+            2...4 => 1,
+            5...16 => 2,
+            17...64 => 3,
+            65...256 => 4,
+            257...1024 => 5,
+            _ => 6,
         };
         let poolptr = pool as *mut RawPool;
         for b in bin..(NUM_BINS - 1) {
@@ -481,8 +489,7 @@ impl FreedBins {
             assert!(old_blocks > blocks);
             let old_block = freed.block();
             let new_block = old_block + blocks;
-            let new_freed = pool.freed_mut(new_block)
-                as *mut Free;
+            let new_freed = pool.freed_mut(new_block) as *mut Free;
             (*new_freed) = Free {
                 _blocks: old_blocks - blocks,
                 _block: new_block,
@@ -501,29 +508,28 @@ fn test_bins() {
     use core::slice;
     use cbuf::CBuf;
     unsafe {
-        let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = (
-            [Index::default(); 256], mem::zeroed());
+        let (mut indexes, mut blocks): ([Index; 256], [Block; 4096]) = ([Index::default(); 256],
+                                                                        mem::zeroed());
         let iptr: *mut Index = mem::transmute(&mut indexes[..][0]);
         let bptr: *mut Block = mem::transmute(&mut blocks[..][0]);
 
         let mut cptr = [IndexLoc::default(); 16];
-        let cache_buf: &'static mut [IndexLoc] = slice::from_raw_parts_mut(
-            &mut cptr[0] as *mut IndexLoc, 16);
+        let cache_buf: &'static mut [IndexLoc] =
+            slice::from_raw_parts_mut(&mut cptr[0] as *mut IndexLoc, 16);
         let cache = CBuf::new(cache_buf);
 
-        let mut pool = RawPool::new(
-            iptr, indexes.len() as IndexLoc,
-            bptr, blocks.len() as BlockLoc,
-            cache);
+        let mut pool = RawPool::new(iptr,
+                                    indexes.len() as IndexLoc,
+                                    bptr,
+                                    blocks.len() as BlockLoc,
+                                    cache);
         let p = &mut pool as *mut RawPool;
 
         // allocate and free through normal process
-        let bin1 = Vec::from_iter(
-            (0..5).map(|_| pool.alloc_index(10, true).unwrap()));
+        let bin1 = Vec::from_iter((0..5).map(|_| pool.alloc_index(10, true).unwrap()));
         // let bin1_blocks: Vec<_> = bin1.iter().map(|i| pool.index(*i).block()).collect();
 
-        let bin2 = Vec::from_iter(
-            (0..5).map(|_| pool.alloc_index(20, true).unwrap()));
+        let bin2 = Vec::from_iter((0..5).map(|_| pool.alloc_index(20, true).unwrap()));
         let f1_i = pool.alloc_index(1, true).unwrap();
         let f1_index = (*p).index(f1_i);
         assert_eq!(f1_index.block(), 150);
@@ -637,4 +643,3 @@ fn test_bins() {
         assert_eq!(f1_index.block(), 0);
     }
 }
-
