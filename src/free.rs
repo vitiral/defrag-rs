@@ -376,7 +376,7 @@ impl FreedBins {
 
     pub unsafe fn pop_slow(&mut self, pool: &mut RawPool, blocks: BlockLoc)
                            -> Option<BlockLoc> {
-        assert!(blocks != 0);
+        assert_ne!(blocks, 0);
         if self.len == 0 {
             return None;
         }
@@ -418,7 +418,7 @@ impl FreedBins {
     */
     pub unsafe fn pop_fast(&mut self, pool: &mut RawPool, blocks: BlockLoc)
                            -> Option<BlockLoc> {
-        assert!(blocks != 0);
+        assert_ne!(blocks, 0);
         if self.len == 0 {
             return None;
         }

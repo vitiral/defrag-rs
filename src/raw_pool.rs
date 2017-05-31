@@ -56,7 +56,7 @@ impl fmt::Display for Block {
 impl Block {
     pub fn blocks(&self) -> BlockLoc {
         let out = self._a._blocks & BLOCK_BITMAP;
-        assert!(out != 0);
+        assert_ne!(out, 0);
         out
     }
 
@@ -75,7 +75,7 @@ impl Block {
         } else {
             assert!(block + blocks < pool.heap_block);
             let ptr = self as *mut Block;
-            assert!((*ptr).blocks() != 0);
+            assert_ne!((*ptr).blocks(), 0);
             Some(&mut *ptr.offset(blocks as isize))
         }
     }
@@ -538,6 +538,7 @@ impl RawPool {
 
     // semi-private unsafe API
 
+    #[allow(mut_from_ref)]
     pub unsafe fn index_mut(&self, i: IndexLoc) -> &mut Index {
         &mut *self._indexes.offset(i as isize)
     }
@@ -567,6 +568,7 @@ impl RawPool {
     }
 
     /// mut the block as a Free block
+    #[allow(mut_from_ref)]
     pub unsafe fn freed_mut(&self, block: BlockLoc) -> &mut Free {
         &mut *(self._blocks.offset(block as isize) as *mut Free)
     }
@@ -577,6 +579,7 @@ impl RawPool {
     }
 
     /// mut the block as a Full block
+    #[allow(mut_from_ref)]
     pub unsafe fn full_mut(&self, block: BlockLoc) -> &mut Full {
         &mut *(self._blocks.offset(block as isize) as *mut Full)
     }
