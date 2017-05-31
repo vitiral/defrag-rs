@@ -362,7 +362,7 @@ impl<'a, 'mutex: 'a, T: 'mutex> Deref for Value<'a, 'mutex, T> {
     }
 }
 
-impl<'a, 'mutex: 'a, T: 'a> DerefMut for Value<'a, 'mutex, T> {
+impl<'a, 'mutex: 'a, T: 'mutex> DerefMut for Value<'a, 'mutex, T> {
     fn deref_mut(&mut self) -> &mut T {
         unsafe {
             let pool = &*self.__lock.pool.raw;
@@ -446,7 +446,7 @@ impl<'a, 'mutex: 'a, T: 'mutex> Deref for Slice<'a, 'mutex, T> {
 }
 
 
-impl<'a, 'mutex: 'a, T: 'a> DerefMut for Slice<'a, 'mutex, T> {
+impl<'a, 'mutex: 'a, T: 'mutex> DerefMut for Slice<'a, 'mutex, T> {
     fn deref_mut(&mut self) -> &mut [T] {
         unsafe {
             let pool = &*self.__lock.pool.raw;

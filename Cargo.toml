@@ -1,16 +1,15 @@
 [package]
 name = "defrag"
 version = "0.1.3"
-description = "safe and low overhead memory manager for microcontrollers"
-documentation = "https://docs.rs/defrag"
+description = "safe and low overhead defragmenting memory manager for microcontrollers"
 repository = "https://github.com/vitiral/defrag-rs"
-keywords = ["embedded", "memory", "manager", "microcontroller"]
+documentation = "https://docs.rs/defrag"
+keywords = ["no_std", "embedded", "memory", "manager", "microcontroller"]
 authors = ["Garrett Berg <vitiral@gmail.com>"]
 readme = "README.md"
 license = "MIT"
 
 [dependencies]
-# cbuf = {git="https://github.com/dpc/cbuf-rs"}
 cbuf = "0.1.*"
 
 [dev-dependencies]
